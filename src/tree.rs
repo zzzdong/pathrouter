@@ -2,6 +2,14 @@ use std::collections::BTreeMap;
 
 pub(crate) type ParamMap = BTreeMap<usize, (String, String)>;
 
+const CHAR_PATH_SEP: char = '/';
+const CHAR_PARAM: char = ':';
+const CHAR_WILDCARD: char = '*';
+
+const PAT_PATH_SEP: &str = "/";
+const PAT_PARAM: &str = ":";
+const PAT_WILDCARD: &str = "*";
+
 #[derive(Debug, PartialEq)]
 enum Pattern {
     Static(String),
@@ -13,16 +21,16 @@ impl Pattern {
     fn from_str(pat: impl AsRef<str>) -> Self {
         let pat = pat.as_ref();
         match pat.chars().next() {
-            Some(':') => Pattern::Param(pat[1..].to_owned()),
-            Some('*') => Pattern::Wildcard(pat[1..].to_owned()),
+            Some(CHAR_PARAM) => Pattern::Param(pat[1..].to_owned()),
+            Some(CHAR_WILDCARD) => Pattern::Wildcard(pat[1..].to_owned()),
             _ => Pattern::Static(pat.to_owned()),
         }
     }
 
     fn as_pat(&self) -> &str {
         match self {
-            Pattern::Param(_) => ":",
-            Pattern::Wildcard(_) => "*",
+            Pattern::Param(_) => PAT_PARAM,
+            Pattern::Wildcard(_) => PAT_WILDCARD,
             Pattern::Static(p) => p,
         }
     }
@@ -66,7 +74,7 @@ pub struct Tree<T> {
 
 impl<T> Tree<T> {
     pub fn new() -> Self {
-        let root = Node::new(0, 0, Pattern::from_str("/"));
+        let root = Node::new(0, 0, Pattern::from_str(PAT_PATH_SEP));
 
         Tree { nodes: vec![root] }
     }
@@ -163,19 +171,13 @@ impl<T> Tree<T> {
                 Some(child) => return Some(child),
                 None => {
                     if n.has_param_child {
-                        match n.children.get(":") {
-                            Some(child) => {
-                                return Some(child);
-                            }
-                            None => {}
+                        if let Some(child) = n.children.get(PAT_PARAM) {
+                            return Some(child);
                         }
                     }
                     if n.has_wildcard_child {
-                        match n.children.get("*") {
-                            Some(child) => {
-                                return Some(child);
-                            }
-                            None => {}
+                        if let Some(child) = n.children.get(PAT_WILDCARD) {
+                            return Some(child);
                         }
                     }
                 }
@@ -197,7 +199,7 @@ impl<T> Tree<T> {
             }
 
             if self.get(node.parent).has_wildcard_child {
-                let wildcard = self.get(node.parent).children.get("*");
+                let wildcard = self.get(node.parent).children.get(PAT_WILDCARD);
                 return wildcard.cloned();
             } else {
                 index = node.parent;
@@ -310,7 +312,7 @@ struct Segments<'a> {
 impl<'a> Segments<'a> {
     fn new(s: &'a str) -> Self {
         // skip first `/`
-        let s = match s.strip_prefix('/') {
+        let s = match s.strip_prefix(CHAR_PATH_SEP) {
             Some(s) => s,
             None => s,
         };
@@ -323,7 +325,7 @@ impl<'a> Segments<'a> {
     }
 
     fn next(&mut self) -> Option<&str> {
-        match self.s.split_once('/') {
+        match self.s.split_once(CHAR_PATH_SEP) {
             Some((seg, s)) => {
                 self.pos = self.s;
                 self.s = s;

@@ -1,19 +1,17 @@
-use std::{
-    collections::{btree_map, BTreeMap},
-    ops::Index,
-};
-
-use tree::Tree;
-
 mod tree;
 
+use std::collections::{btree_map, BTreeMap};
+use std::ops::Index;
+
 pub struct Router<T> {
-    tree: Tree<T>,
+    tree: crate::tree::Tree<T>,
 }
 
 impl<T> Router<T> {
     pub fn new() -> Self {
-        Router { tree: Tree::new() }
+        Router {
+            tree: crate::tree::Tree::new(),
+        }
     }
 
     pub fn add(&mut self, pattern: &str, endpoint: T) {
@@ -53,7 +51,7 @@ impl<T: Default> Default for Router<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Params {
     map: BTreeMap<String, String>,
 }
@@ -232,6 +230,46 @@ mod test {
     //     assert_eq!(*endpoint, "test2");
     //     assert_eq!(params, one_params("bar", "test"));
     // }
+
+    #[test]
+    fn modify_router() {
+        let mut router = Router::new();
+
+        router.add("/a/b/c", "abc");
+        router.add("/e/:f/g", "efg");
+
+        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        assert_eq!(*endpoint, "abc");
+
+        *router.at_or_default("/a/b/c") = "aabbcc";
+
+        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        assert_eq!(*endpoint, "aabbcc");
+
+        let (endpoint, _params) = router.route("/e/f/g").unwrap();
+        assert_eq!(*endpoint, "efg");
+
+        *router.at_or_default("/e/:f/g") = "eeffgg";
+
+        let (endpoint, _params) = router.route("/e/f/g").unwrap();
+        assert_eq!(*endpoint, "eeffgg");
+    }
+
+    #[test]
+    fn modify_router2() {
+        let mut router: Router<Vec<&str>> = Router::new();
+
+        router.at_or_default("/a/b/c").push("abc");
+        router.at_or_default("/a/b/c").push("aabbcc");
+
+        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        assert_eq!(*endpoint, vec!["abc", "aabbcc"]);
+
+        router.at_or_default("/a/b/c").clear();
+
+        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        assert_eq!(*endpoint, Vec::<&str>::new());
+    }
 
     fn empty_params() -> Params {
         Params::new()
