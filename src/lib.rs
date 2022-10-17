@@ -214,22 +214,26 @@ mod test {
         assert_eq!(params, one_params("b", "foo"));
     }
 
-    // TODO: add support different params
-    // #[test]
-    // fn unnamed_parameters() {
-    //     let mut router = Router::new();
+    #[test]
+    fn unnamed_parameters() {
+        let mut router = Router::new();
 
-    //     router.add("/foo/:/bar", "test");
-    //     router.add("/foo/:bar/*", "test2");
+        router.add("/foo/:/bar", "test");
+        router.add("/bar/*", "bar");
+        router.add("/hello/*world", "hello");
 
-    //     let (endpoint, params) = router.route("/foo/test/bar").unwrap();
-    //     assert_eq!(*endpoint, "test");
-    //     assert_eq!(params, empty_params());
+        let (endpoint, params) = router.route("/foo/test/bar").unwrap();
+        assert_eq!(*endpoint, "test");
+        assert_eq!(params, empty_params());
 
-    //     let (endpoint, params) = router.route("/foo/test/blah").unwrap();
-    //     assert_eq!(*endpoint, "test2");
-    //     assert_eq!(params, one_params("bar", "test"));
-    // }
+        let (endpoint, params) = router.route("/bar/hello").unwrap();
+        assert_eq!(*endpoint, "bar");
+        assert_eq!(params, empty_params());
+
+        let (endpoint, params) = router.route("/hello/world").unwrap();
+        assert_eq!(*endpoint, "hello");
+        assert_eq!(params, one_params("world", "world"));
+    }
 
     #[test]
     fn modify_router() {

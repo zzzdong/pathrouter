@@ -209,9 +209,12 @@ impl<T> Tree<T> {
         None
     }
 
+    /// Get route path from finished node, only return path when had least one param,
+    /// otherwise return route path.
     fn get_route_path(&self, node: usize) -> Vec<usize> {
         let mut path = Vec::new();
         let mut index = node;
+        let mut has_param = false;
 
         loop {
             let node = self.get(index);
@@ -219,9 +222,28 @@ impl<T> Tree<T> {
                 break;
             }
 
+            // ignore unamed params
+            match &node.pattern {
+                Pattern::Param(p) => {
+                    if !p.is_empty() {
+                        has_param = true;
+                    }
+                }
+                Pattern::Wildcard(p) => {
+                    if !p.is_empty() {
+                        has_param = true;
+                    }
+                }
+                Pattern::Static(_) => {}
+            }
+
             path.push(index);
 
             index = node.parent;
+        }
+
+        if !has_param {
+            return Vec::new();
         }
 
         path.reverse();
@@ -235,22 +257,24 @@ impl<T> Tree<T> {
 
         let path = self.get_route_path(node);
 
-        // recapture params
+        // recapture named params
         for index in &path {
             if let Some(seg) = segs.next() {
                 match &self.get(*index).pattern {
                     Pattern::Param(p) => {
-                        params.insert(*index, (p.to_owned(), seg.to_owned()));
+                        if !p.is_empty() {
+                            params.insert(*index, (p.to_owned(), seg.to_owned()));
+                        }
                     }
                     Pattern::Wildcard(p) => {
-                        params.insert(*index, (p.to_owned(), segs.reminder().to_owned()));
+                        if !p.is_empty() {
+                            params.insert(*index, (p.to_owned(), segs.reminder().to_owned()));
+                        }
                     }
                     Pattern::Static(_) => {}
                 }
             }
         }
-
-        params.retain(|k, _| path.contains(k));
 
         params
     }
