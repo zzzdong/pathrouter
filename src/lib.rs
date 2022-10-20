@@ -3,6 +3,7 @@ mod tree;
 use std::collections::{btree_map, BTreeMap};
 use std::ops::Index;
 
+#[derive(Debug, Clone)]
 pub struct Router<T> {
     tree: crate::tree::Tree<T>,
 }
@@ -16,6 +17,10 @@ impl<T> Router<T> {
 
     pub fn add(&mut self, pattern: &str, endpoint: T) {
         self.tree.insert(pattern, endpoint);
+    }
+
+    pub fn merge(&mut self, path: &str, other: Router<T>) {
+        self.tree.merge(path, other.tree);
     }
 
     pub fn route(&self, path: &str) -> Option<(&T, Params)> {
@@ -35,11 +40,13 @@ impl<T: Default> Router<T> {
     pub fn at_or_default(&mut self, pattern: &str) -> &mut T {
         let endpoint = self.tree.at(pattern);
 
-        match endpoint {
+        let data = &mut endpoint.data;
+
+        match data {
             Some(ep) => ep,
             None => {
-                *endpoint = Some(T::default());
-                endpoint.as_mut().unwrap()
+                *data = Some(T::default());
+                data.as_mut().unwrap()
             }
         }
     }
@@ -242,20 +249,20 @@ mod test {
         router.add("/a/b/c", "abc");
         router.add("/e/:f/g", "efg");
 
-        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        let endpoint = router.route("/a/b/c").unwrap().0;
         assert_eq!(*endpoint, "abc");
 
         *router.at_or_default("/a/b/c") = "aabbcc";
 
-        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        let endpoint = router.route("/a/b/c").unwrap().0;
         assert_eq!(*endpoint, "aabbcc");
 
-        let (endpoint, _params) = router.route("/e/f/g").unwrap();
+        let endpoint = router.route("/e/f/g").unwrap().0;
         assert_eq!(*endpoint, "efg");
 
         *router.at_or_default("/e/:f/g") = "eeffgg";
 
-        let (endpoint, _params) = router.route("/e/f/g").unwrap();
+        let endpoint = router.route("/e/f/g").unwrap().0;
         assert_eq!(*endpoint, "eeffgg");
     }
 
@@ -266,13 +273,40 @@ mod test {
         router.at_or_default("/a/b/c").push("abc");
         router.at_or_default("/a/b/c").push("aabbcc");
 
-        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        let endpoint = router.route("/a/b/c").unwrap().0;
         assert_eq!(*endpoint, vec!["abc", "aabbcc"]);
 
         router.at_or_default("/a/b/c").clear();
 
-        let (endpoint, _params) = router.route("/a/b/c").unwrap();
+        let endpoint = router.route("/a/b/c").unwrap().0;
         assert_eq!(*endpoint, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn subtree() {
+        let mut router = Router::new();
+
+        router.add("/v1/posts", "posts1");
+
+        let mut subtree = Router::new();
+
+        subtree.add("/new", "new-post");
+        subtree.add("/edit", "edit-post");
+
+        router.merge("/v1/posts/", subtree.clone());
+
+        let endpoint = router.route("/v1/posts").unwrap().0;
+
+        assert_eq!(*endpoint, "posts1");
+
+        let endpoint = router.route("/v1/posts/new").unwrap().0;
+
+        assert_eq!(*endpoint, "new-post");
+
+        router.merge("/v2/posts/", subtree);
+
+        assert_eq!(*router.route("/v2/posts/new").unwrap().0, "new-post");
+        assert_eq!(*router.route("/v2/posts/edit").unwrap().0, "edit-post");
     }
 
     fn empty_params() -> Params {

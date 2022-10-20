@@ -10,7 +10,7 @@ const PAT_PATH_SEP: &str = "/";
 const PAT_PARAM: &str = ":";
 const PAT_WILDCARD: &str = "*";
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Pattern {
     Static(String),
     Param(String),
@@ -42,15 +42,15 @@ impl From<&str> for Pattern {
     }
 }
 
-#[derive(Debug)]
-struct Node<T> {
+#[derive(Debug, Clone)]
+pub(crate) struct Node<T> {
     index: usize,
     parent: usize,
     pattern: Pattern,
     children: BTreeMap<String, usize>,
     has_param_child: bool,
     has_wildcard_child: bool,
-    data: Option<T>,
+    pub(crate) data: Option<T>,
 }
 
 impl<T> Node<T> {
@@ -67,7 +67,7 @@ impl<T> Node<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tree<T> {
     nodes: Vec<Node<T>>,
 }
@@ -82,7 +82,7 @@ impl<T> Tree<T> {
     pub fn insert(&mut self, path: &str, data: T) {
         let got = self.at(path);
 
-        *got = Some(data);
+        got.data = Some(data);
     }
 
     pub fn search(&self, path: &str) -> Option<(&T, ParamMap)> {
@@ -94,6 +94,31 @@ impl<T> Tree<T> {
             }
 
             None => None,
+        }
+    }
+
+    pub fn merge(&mut self, path: &str, other: Self) {
+        let offset = self.nodes.len() - 1;
+
+        let path = path.trim_end_matches('/');
+
+        let root = self.at(path).index;
+
+        for mut n in other.nodes {
+            // skip root
+            if n.index == 0 {
+                continue;
+            }
+
+            if n.parent == 0 {
+                n.parent = root;
+            } else {
+                n.parent = offset;
+            }
+
+            let child = self.add_child(n.parent, n.pattern);
+
+            self.get_mut(child).data = n.data;
         }
     }
 
@@ -134,7 +159,7 @@ impl<T> Tree<T> {
         self.get(node).data.as_ref().map(|_| node)
     }
 
-    pub(crate) fn at(&mut self, path: &str) -> &mut Option<T> {
+    pub(crate) fn at(&mut self, path: &str) -> &mut Node<T> {
         let mut node = self.nodes.first().unwrap().index;
 
         let mut segs = Segments::new(path);
@@ -152,9 +177,7 @@ impl<T> Tree<T> {
             }
         }
 
-        let end = self.get_mut(node);
-
-        &mut end.data
+        self.get_mut(node)
     }
 
     fn get(&self, index: usize) -> &Node<T> {
