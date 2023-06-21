@@ -1,38 +1,34 @@
-use std::{
-    collections::{btree_map, BTreeMap},
-    ops::Index,
-};
+mod tree;
 
-mod nfa;
+use std::collections::{btree_map, BTreeMap};
+use std::ops::Index;
 
 #[derive(Debug, Clone)]
 pub struct Router<T> {
-    tree: nfa::Nfa,
-    endpoints: BTreeMap<usize, T>,
+    tree: crate::tree::Tree<T>,
 }
 
 impl<T> Router<T> {
     pub fn new() -> Self {
         Router {
-            tree: nfa::Nfa::new(),
-            endpoints: BTreeMap::new(),
+            tree: crate::tree::Tree::new(),
         }
     }
 
     pub fn add(&mut self, pattern: &str, endpoint: T) {
-        let state = self.tree.insert(pattern);
-        self.endpoints.insert(state, endpoint);
+        self.tree.insert(pattern, endpoint);
+    }
+
+    pub fn merge(&mut self, path: &str, other: Router<T>) {
+        self.tree.merge(path, other.tree);
     }
 
     pub fn route(&self, path: &str) -> Option<(&T, Params)> {
-        self.tree.search(path).map(|found| {
-            let endpoint = self.endpoints.get(&found.state).unwrap();
+        self.tree.search(path).map(|(endpoint, p)| {
             let mut params = Params::new();
 
-            for (n, v) in found.params {
-                if !n.is_empty() {
-                    params.map.insert(n.to_string(), v.to_string());
-                }
+            for (_k, (n, v)) in p {
+                params.map.insert(n, v);
             }
 
             (endpoint, params)
@@ -41,11 +37,18 @@ impl<T> Router<T> {
 }
 
 impl<T: Default> Router<T> {
-    pub fn at_or_default(&mut self, path: &str) -> &mut T {
-        let state = self.tree.locate(path);
-        self.tree.accept(state);
+    pub fn at_or_default(&mut self, pattern: &str) -> &mut T {
+        let endpoint = self.tree.at(pattern);
 
-        self.endpoints.entry(state).or_default()
+        let data = &mut endpoint.data;
+
+        match data {
+            Some(ep) => ep,
+            None => {
+                *data = Some(T::default());
+                data.as_mut().unwrap()
+            }
+        }
     }
 }
 
@@ -279,32 +282,32 @@ mod test {
         assert_eq!(*endpoint, Vec::<&str>::new());
     }
 
-    // #[test]
-    // fn subtree() {
-    //     let mut router = Router::new();
+    #[test]
+    fn subtree() {
+        let mut router = Router::new();
 
-    //     router.add("/v1/posts", "posts1");
+        router.add("/v1/posts", "posts1");
 
-    //     let mut subtree = Router::new();
+        let mut subtree = Router::new();
 
-    //     subtree.add("/new", "new-post");
-    //     subtree.add("/edit", "edit-post");
+        subtree.add("/new", "new-post");
+        subtree.add("/edit", "edit-post");
 
-    //     router.merge("/v1/posts/", subtree.clone());
+        router.merge("/v1/posts/", subtree.clone());
 
-    //     let endpoint = router.route("/v1/posts").unwrap().0;
+        let endpoint = router.route("/v1/posts").unwrap().0;
 
-    //     assert_eq!(*endpoint, "posts1");
+        assert_eq!(*endpoint, "posts1");
 
-    //     let endpoint = router.route("/v1/posts/new").unwrap().0;
+        let endpoint = router.route("/v1/posts/new").unwrap().0;
 
-    //     assert_eq!(*endpoint, "new-post");
+        assert_eq!(*endpoint, "new-post");
 
-    //     router.merge("/v2/posts/", subtree);
+        router.merge("/v2/posts/", subtree);
 
-    //     assert_eq!(*router.route("/v2/posts/new").unwrap().0, "new-post");
-    //     assert_eq!(*router.route("/v2/posts/edit").unwrap().0, "edit-post");
-    // }
+        assert_eq!(*router.route("/v2/posts/new").unwrap().0, "new-post");
+        assert_eq!(*router.route("/v2/posts/edit").unwrap().0, "edit-post");
+    }
 
     fn empty_params() -> Params {
         Params::new()
