@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 const CHAR_PATH_SEP: char = '/';
 const CHAR_PARAM: char = ':';
 const CHAR_WILDCARD: char = '*';
@@ -5,14 +7,79 @@ const CHAR_WILDCARD: char = '*';
 #[derive(Debug, Clone)]
 struct State {
     index: usize,
-    next_state: Vec<(Pattern, usize)>,
+    transitions: Transitions,
 }
 
 impl State {
     fn new(index: usize) -> Self {
         State {
             index,
-            next_state: Vec::new(),
+            transitions: Transitions::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Transitions {
+    fast_path: BTreeMap<String, usize>,
+    slow_path: Vec<(Pattern, usize)>,
+}
+
+impl Transitions {
+    fn new() -> Self {
+        Transitions {
+            fast_path: BTreeMap::new(),
+            slow_path: Vec::new(),
+        }
+    }
+
+    fn insert(&mut self, pat: Pattern, new_state: usize) {
+        match pat {
+            Pattern::Static(p) => {
+                self.fast_path.insert(p, new_state);
+            }
+            _ => {
+                self.slow_path.push((pat, new_state));
+            }
+        }
+    }
+
+    fn find(&self, pat: &Pattern) -> Option<usize> {
+        match pat {
+            Pattern::Static(p) => self.fast_path.get(p).cloned(),
+            _ => {
+                for (ref p, state) in &self.slow_path {
+                    if p == pat {
+                        return Some(*state);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn route<'a: 'b, 'b>(&'a self, seg: &'b str) -> Vec<(usize, Capture<'b>)> {
+        match self.fast_path.get(seg) {
+            Some(state) => {
+                vec![(*state, Capture::Static)]
+            }
+            None => {
+                let mut ret = Vec::with_capacity(self.slow_path.len());
+                for (ref p, state) in &self.slow_path {
+                    match p {
+                        Pattern::Param(name) => {
+                            ret.push((*state, Capture::Param(name, seg)));
+                        }
+                        Pattern::Wildcard(name) => {
+                            ret.push((*state, Capture::Wildcard(name, seg)));
+                        }
+                        Pattern::Static(_) => {
+                            unreachable!()
+                        }
+                    }
+                }
+                ret
+            }
         }
     }
 }
@@ -100,13 +167,7 @@ impl Nfa {
         for seg in segs {
             let pat = Pattern::from_str(seg);
 
-            let mut next = None;
-            for transition in &self.get_state(index).next_state {
-                if transition.0 == pat {
-                    next = Some(transition.1);
-                    break;
-                }
-            }
+            let next = self.get_state(index).transitions.find(&pat);
 
             match next {
                 Some(s) => {
@@ -114,7 +175,7 @@ impl Nfa {
                 }
                 None => {
                     let new_state = self.new_state();
-                    self.get_state_mut(index).next_state.push((pat, new_state));
+                    self.get_state_mut(index).transitions.insert(pat, new_state);
 
                     index = new_state;
                 }
@@ -147,6 +208,10 @@ impl Nfa {
         }
 
         roads = self.process_seg(roads, path, path);
+
+        if roads.is_empty() {
+            return None;
+        }
 
         let mut roads: Vec<Road> = roads
             .into_iter()
@@ -193,26 +258,25 @@ impl Nfa {
             let Road {
                 state, captures, ..
             } = r;
-            for (pat, next) in &self.get_state(state).next_state {
-                match pat {
-                    Pattern::Static(s) if s == seg => {
-                        let mut captures = captures.clone();
-                        captures.push(Capture::Static);
-                        returned.push(Road::new(*next, captures));
+
+            for (next, capture) in self.get_state(state).transitions.route(seg) {
+                let mut captures = captures.clone();
+
+                match capture {
+                    Capture::Static => {
+                        captures.push(capture);
+                        returned.push(Road::new(next, captures));
                     }
-                    Pattern::Param(name) => {
-                        let mut captures = captures.clone();
-                        captures.push(Capture::Param(name, seg));
-                        returned.push(Road::new(*next, captures));
+                    Capture::Param(_name, _value) => {
+                        captures.push(capture);
+                        returned.push(Road::new(next, captures));
                     }
-                    Pattern::Wildcard(name) => {
-                        let mut captures = captures.clone();
+                    Capture::Wildcard(name, _) => {
                         captures.push(Capture::Wildcard(name, path));
-                        let mut road = Road::new(*next, captures);
+                        let mut road = Road::new(next, captures);
                         road.set_wildcard(true);
                         returned.push(road);
                     }
-                    _ => {}
                 }
             }
         }
@@ -306,6 +370,21 @@ mod test {
         println!("-> {:?}", nfa);
 
         let ret = nfa.search("/api/v1/post/tom/daily");
+
+        println!("ret => {:?}", ret);
+    }
+
+    #[test]
+    fn test_nfa2() {
+        let mut nfa = Nfa::new();
+
+        nfa.insert("/posts/:post_id/comments/100");
+        nfa.insert("/posts/100/comments/10");
+
+
+        println!("-> {:?}", nfa);
+
+        let ret = nfa.search("/posts/100/comments/100");
 
         println!("ret => {:?}", ret);
     }
