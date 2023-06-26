@@ -4,64 +4,6 @@ use std::{
 };
 
 mod nfa;
-mod tree;
-
-
-#[derive(Debug, Clone)]
-pub struct Router2<T> {
-    tree: crate::tree::Tree<T>,
-}
-
-impl<T> Router2<T> {
-    pub fn new() -> Self {
-        Router2 {
-            tree: crate::tree::Tree::new(),
-        }
-    }
-
-    pub fn add(&mut self, pattern: &str, endpoint: T) {
-        self.tree.insert(pattern, endpoint);
-    }
-
-    pub fn merge(&mut self, path: &str, other: Router2<T>) {
-        self.tree.merge(path, other.tree);
-    }
-
-    pub fn route(&self, path: &str) -> Option<(&T, Params)> {
-        self.tree.search(path).map(|(endpoint, p)| {
-            let mut params = Params::new();
-
-            for (_k, (n, v)) in p {
-                params.map.insert(n, v);
-            }
-
-            (endpoint, params)
-        })
-    }
-}
-
-impl<T: Default> Router2<T> {
-    pub fn at_or_default(&mut self, pattern: &str) -> &mut T {
-        let endpoint = self.tree.at(pattern);
-
-        let data = &mut endpoint.data;
-
-        match data {
-            Some(ep) => ep,
-            None => {
-                *data = Some(T::default());
-                data.as_mut().unwrap()
-            }
-        }
-    }
-}
-
-impl<T: Default> Default for Router2<T> {
-    fn default() -> Self {
-        Router2::new()
-    }
-}
-
 
 #[derive(Debug, Clone)]
 pub struct Router<T> {
@@ -236,24 +178,6 @@ mod test {
 
         assert_eq!(*endpoint, "new");
         assert_eq!(params, empty_params());
-    }
-
-    #[test]
-    fn ambiguous_router_c() {
-        let mut router = Router::new();
-
-        router.add("/posts/100/comments/10", "100-10");
-        router.add("/posts/:post/comments/100", "post-100");
-
-        let (endpoint, params) = router.route("/posts/100/comments/10").unwrap();
-
-        assert_eq!(*endpoint, "100-10");
-        assert_eq!(params, empty_params());
-
-        let (endpoint, params) = router.route("/posts/100/comments/100").unwrap();
-
-        assert_eq!(*endpoint, "post-100");
-        assert_eq!(params, one_params("post", "100"));
     }
 
     #[test]

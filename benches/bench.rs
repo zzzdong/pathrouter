@@ -3,24 +3,10 @@
 extern crate pathrouter;
 extern crate test;
 
-use pathrouter::{Router, Router2};
+use pathrouter::Router;
 
 #[bench]
-fn benchmark_tree(b: &mut test::Bencher) {
-    let mut router = Router2::new();
-    router.add("/posts/:post_id/comments/:id", "comment".to_string());
-    router.add("/posts/:post_id/comments", "comments".to_string());
-    router.add("/posts/:post_id", "post".to_string());
-    router.add("/posts", "posts".to_string());
-    router.add("/comments", "comments2".to_string());
-    router.add("/comments/:id", "comment2".to_string());
-
-    b.iter(|| router.route("/posts/100/comments/200"));
-}
-
-
-#[bench]
-fn benchmark_nfa(b: &mut test::Bencher) {
+fn benchmark(b: &mut test::Bencher) {
     let mut router = Router::new();
     router.add("/posts/:post_id/comments/:id", "comment".to_string());
     router.add("/posts/:post_id/comments", "comments".to_string());
