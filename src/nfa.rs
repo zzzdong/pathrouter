@@ -309,4 +309,19 @@ mod test {
 
         println!("ret => {:?}", ret);
     }
+
+    #[test]
+    fn test_nfa2() {
+        let mut nfa = Nfa::new();
+
+        nfa.insert("/posts/:post_id/comments/100");
+        nfa.insert("/posts/100/comments/10");
+
+
+        println!("-> {:?}", nfa);
+
+        let ret = nfa.search("/posts/100/comments/100");
+
+        println!("ret => {:?}", ret);
+    }
 }

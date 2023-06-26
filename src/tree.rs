@@ -137,7 +137,7 @@ impl<T> Tree<T> {
 
                     node = n;
                 }
-                None => match self.search_cloest_wildcard_node(node) {
+                None => match self.search_closest_wildcard_node(node) {
                     Some(n) => {
                         node = n;
 
@@ -151,7 +151,7 @@ impl<T> Tree<T> {
         }
 
         if self.get(node).data.is_none() {
-            if let Some(n) = self.search_cloest_wildcard_node(node) {
+            if let Some(n) = self.search_closest_wildcard_node(node) {
                 node = n;
             }
         }
@@ -212,7 +212,7 @@ impl<T> Tree<T> {
         perfect.cloned()
     }
 
-    fn search_cloest_wildcard_node(&self, node: usize) -> Option<usize> {
+    fn search_closest_wildcard_node(&self, node: usize) -> Option<usize> {
         let mut index = node;
 
         loop {
