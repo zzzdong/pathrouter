@@ -75,7 +75,7 @@ impl Nfa {
         new_index
     }
 
-    fn start_state(&self) -> usize {
+    pub(crate) fn start_state(&self) -> usize {
         self.states.first().expect("first state not exist").index
     }
 
@@ -219,6 +219,26 @@ impl Nfa {
 
         returned
     }
+
+    pub(crate) fn merge(&mut self, left: usize, other: &Self, right: usize) -> Vec<(usize, usize)> {
+        let mut returned = Vec::new();
+
+        for (pat, old) in &other.get_state(right).next_state {
+            let new_state = self.new_state();
+            if other.get_acceptance(*old) {
+                self.accept(new_state);
+            }
+            self.get_state_mut(left)
+                .next_state
+                .push((pat.clone(), new_state));
+
+            returned.push((new_state, *old));
+
+            returned.extend(self.merge(new_state, other, *old));
+        }
+
+        returned
+    }
 }
 
 #[derive(Debug)]
@@ -317,10 +337,34 @@ mod test {
         nfa.insert("/posts/:post_id/comments/100");
         nfa.insert("/posts/100/comments/10");
 
-
         println!("-> {:?}", nfa);
 
         let ret = nfa.search("/posts/100/comments/100");
+
+        println!("ret => {:?}", ret);
+    }
+
+    #[test]
+    fn test_nfa_merge() {
+        let mut nfa = Nfa::new();
+
+        nfa.insert("/a/b/c");
+        nfa.insert("/a/b/d");
+        nfa.insert("/a/b/e");
+
+        let mut other = Nfa::new();
+
+        other.insert("/h/i/j");
+        other.insert("/h/i/k");
+        other.insert("/h/i/l");
+
+        let sub = nfa.locate("/a");
+
+        nfa.merge(sub, &other, other.start_state());
+
+        println!("-> {:?}", nfa);
+
+        let ret = nfa.search("/a/h/i/k");
 
         println!("ret => {:?}", ret);
     }

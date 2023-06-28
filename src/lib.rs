@@ -39,6 +39,21 @@ impl<T> Router<T> {
             (endpoint, params)
         })
     }
+
+    pub fn merge(&mut self, path: &str, mut other: Router<T>) {
+        let path = path.trim_end_matches('/');
+        let state = self.tree.locate(path);
+
+        let right = other.tree.start_state();
+
+        let states = self.tree.merge(state, &other.tree, right);
+
+        for (new, old) in states {
+            if let Some(ep) = other.endpoints.remove(&old) {
+                self.endpoints.insert(new, ep);
+            }
+        }
+    }
 }
 
 impl<T: Default> Router<T> {
@@ -55,7 +70,6 @@ impl<T: Default> Default for Router<T> {
         Router::new()
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Router2<T> {
@@ -354,32 +368,32 @@ mod test {
         assert_eq!(*endpoint, Vec::<&str>::new());
     }
 
-    // #[test]
-    // fn subtree() {
-    //     let mut router = Router::new();
+    #[test]
+    fn subtree() {
+        let mut router = Router::new();
 
-    //     router.add("/v1/posts", "posts1");
+        router.add("/v1/posts", "posts1");
 
-    //     let mut subtree = Router::new();
+        let mut subtree = Router::new();
 
-    //     subtree.add("/new", "new-post");
-    //     subtree.add("/edit", "edit-post");
+        subtree.add("/new", "new-post");
+        subtree.add("/edit", "edit-post");
 
-    //     router.merge("/v1/posts/", subtree.clone());
+        router.merge("/v1/posts", subtree.clone());
 
-    //     let endpoint = router.route("/v1/posts").unwrap().0;
+        let endpoint = router.route("/v1/posts").unwrap().0;
 
-    //     assert_eq!(*endpoint, "posts1");
+        assert_eq!(*endpoint, "posts1");
 
-    //     let endpoint = router.route("/v1/posts/new").unwrap().0;
+        let endpoint = router.route("/v1/posts/new").unwrap().0;
 
-    //     assert_eq!(*endpoint, "new-post");
+        assert_eq!(*endpoint, "new-post");
 
-    //     router.merge("/v2/posts/", subtree);
+        router.merge("/v2/posts/", subtree);
 
-    //     assert_eq!(*router.route("/v2/posts/new").unwrap().0, "new-post");
-    //     assert_eq!(*router.route("/v2/posts/edit").unwrap().0, "edit-post");
-    // }
+        assert_eq!(*router.route("/v2/posts/new").unwrap().0, "new-post");
+        assert_eq!(*router.route("/v2/posts/edit").unwrap().0, "edit-post");
+    }
 
     fn empty_params() -> Params {
         Params::new()

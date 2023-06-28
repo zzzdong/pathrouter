@@ -23,7 +23,6 @@ fn benchmark_nfa(b: &mut test::Bencher) {
         router.route("/posts/100/comments/200");
         router.route("/api/v1/self/profile");
         router.route("/api/v1/user/110/profile");
-        
     });
 }
 
@@ -45,6 +44,5 @@ fn benchmark_tree(b: &mut test::Bencher) {
         router.route("/posts/100/comments/200");
         router.route("/api/v1/self/profile");
         router.route("/api/v1/user/110/profile");
-        
     });
 }
