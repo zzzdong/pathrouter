@@ -10,6 +10,19 @@ pathrouter
 
 [`pathrouter`] is a simple router.
 
+## Usage
+
+```rust
+use pathrouter::{Router, Params};
+
+let mut router = Router::new();
+
+router.add("/posts", "posts");
+router.add("/posts/:post_id", "post");
+
+let (endpoint, params) = router.route("/posts/1").unwrap();
+```
+
 ## License
 
 This project is licensed under the [MIT license](LICENSE).

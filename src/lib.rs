@@ -1,3 +1,30 @@
+//! Recognizes URL path patterns with support for dynamic and wildcard segments
+//!
+//! # Examples
+//!
+//! ```
+//! use pathrouter::{Router, Params};
+//!
+//! let mut router = Router::new();
+//!
+//! router.add("/posts", "posts");
+//! router.add("/posts/:post_id", "post");
+//!
+//! let (endpoint, params) = router.route("/posts/1").unwrap();
+//!
+//! assert_eq!(*endpoint, "post");
+//! let mut path_params = Params::new();
+//! path_params.insert("post_id", "1");
+//! assert_eq!(params, path_params);
+//! ```
+//!
+//! # Routing params
+//!
+//! The router supports four kinds of route segments:
+//! - __segments__: these are of the format `/a/b`.
+//! - __params__: these are of the format `/a/:b`.
+//! - __named wildcards__: these are of the format `/a/*b`.
+
 use std::{
     collections::{btree_map, BTreeMap},
     ops::Index,
@@ -6,6 +33,7 @@ use std::{
 mod nfa;
 mod tree;
 
+/// Recognizes URL path patterns with support for dynamic and wildcard segments.
 #[derive(Debug, Clone)]
 pub struct Router<T> {
     tree: nfa::Nfa,
