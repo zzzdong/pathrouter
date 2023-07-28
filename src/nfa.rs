@@ -5,53 +5,64 @@ const CHAR_PARAM: char = ':';
 const CHAR_WILDCARD: char = '*';
 
 #[derive(Debug, Clone)]
+struct Entry {
+    pat: Pattern,
+    index: usize,
+}
+
+impl Entry {
+    fn new(pat: Pattern, index: usize) -> Self {
+        Entry { pat, index }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Transitions {
-    static_edges: BTreeMap<String, usize>,
-    dynamic_edges: Vec<(Pattern, usize)>,
+    static_segment: BTreeMap<String, usize>,
+    param_segment: Option<Entry>,
+    wildcard: Option<Entry>,
 }
 
 impl Transitions {
     fn new() -> Self {
         Transitions {
-            static_edges: BTreeMap::new(),
-            dynamic_edges: Vec::new(),
+            static_segment: BTreeMap::new(),
+            param_segment: None,
+            wildcard: None,
         }
     }
 
     fn get(&self, pat: &Pattern) -> Option<usize> {
         match pat {
-            Pattern::Static(p) => self.static_edges.get(p).cloned(),
-            _ => {
-                for (p, state) in &self.dynamic_edges {
-                    if p == pat {
-                        return Some(*state);
-                    }
-                }
-                None
-            }
+            Pattern::Static(p) => self.static_segment.get(p).cloned(),
+            Pattern::Param(_p) => self.param_segment.as_ref().map(|entry| entry.index),
+            Pattern::Wildcard(_p) => self.wildcard.as_ref().map(|entry| entry.index),
         }
     }
 
     fn push(&mut self, pat: Pattern, index: usize) {
         match pat {
             Pattern::Static(p) => {
-                self.static_edges.insert(p, index);
+                self.static_segment.insert(p, index);
             }
-            _ => {
-                self.dynamic_edges.push((pat, index));
-            }
+            Pattern::Param(p) => self.param_segment = Some(Entry::new(Pattern::Param(p), index)),
+            Pattern::Wildcard(p) => self.wildcard = Some(Entry::new(Pattern::Wildcard(p), index)),
         }
     }
 
-    fn entries(&self) -> Vec<(Pattern, usize)> {
+    fn entries(&self) -> Vec<Entry> {
         let mut ret = Vec::new();
 
-        for (k, v) in self.static_edges.iter() {
-            ret.push((Pattern::Static(k.to_owned()), *v));
+        for (k, v) in self.static_segment.iter() {
+            ret.push(Entry::new(Pattern::Static(k.to_owned()), *v))
         }
 
-        for (k, v) in self.dynamic_edges.iter() {
-            ret.push((k.to_owned(), *v));
+        if let Some(entry) = &self.param_segment {
+            ret.push(entry.clone());
+        }
+
+        if let Some(entry) = &self.wildcard {
+            ret.push(entry.clone());
         }
 
         ret
@@ -60,29 +71,31 @@ impl Transitions {
     fn capture<'a: 'b, 'b>(&'b self, seg: &'a str, path: &'a str) -> Vec<(Capture, usize)> {
         let mut captures = Vec::new();
 
-        if let Some(index) = self.static_edges.get(seg) {
+        if let Some(index) = self.static_segment.get(seg) {
             captures.push((Capture::Static, *index));
         }
 
-        for (pat, index) in &self.dynamic_edges {
-            match pat {
-                Pattern::Param(name) => {
-                    captures.push((Capture::Param(name, seg), *index));
-                }
-                Pattern::Wildcard(name) => {
-                    captures.push((Capture::Wildcard(name, path), *index));
-                }
-                _ => {
-                    unreachable!();
-                }
-            }
+        if let Some(Entry {
+            pat: Pattern::Param(name),
+            index,
+        }) = &self.param_segment
+        {
+            captures.push((Capture::Param(name, seg), *index));
+        }
+
+        if let Some(Entry {
+            pat: Pattern::Wildcard(name),
+            index,
+        }) = &self.wildcard
+        {
+            captures.push((Capture::Wildcard(name, path), *index));
         }
 
         captures
     }
 
     fn capture_static(&self, seg: &str) -> Option<(Capture, usize)> {
-        self.static_edges
+        self.static_segment
             .get(seg)
             .map(|next| (Capture::Static, *next))
     }
@@ -329,7 +342,7 @@ impl Nfa {
     pub(crate) fn merge(&mut self, left: usize, other: &Self, right: usize) -> Vec<(usize, usize)> {
         let mut returned = Vec::new();
 
-        for (pat, old) in other.get_state(right).transitions.entries() {
+        for Entry { pat, index: old } in other.get_state(right).transitions.entries() {
             let new_state = self.new_state();
             if other.get_acceptance(old) {
                 self.accept(new_state);

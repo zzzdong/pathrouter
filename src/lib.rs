@@ -100,13 +100,13 @@ impl<T: Default> Default for Router<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Router2<T> {
+pub struct TreeRouter<T> {
     tree: crate::tree::Tree<T>,
 }
 
-impl<T> Router2<T> {
+impl<T> TreeRouter<T> {
     pub fn new() -> Self {
-        Router2 {
+        TreeRouter {
             tree: crate::tree::Tree::new(),
         }
     }
@@ -115,7 +115,7 @@ impl<T> Router2<T> {
         self.tree.insert(pattern, endpoint);
     }
 
-    pub fn merge(&mut self, path: &str, other: Router2<T>) {
+    pub fn merge(&mut self, path: &str, other: TreeRouter<T>) {
         self.tree.merge(path, other.tree);
     }
 
@@ -132,7 +132,7 @@ impl<T> Router2<T> {
     }
 }
 
-impl<T: Default> Router2<T> {
+impl<T: Default> TreeRouter<T> {
     pub fn at_or_default(&mut self, pattern: &str) -> &mut T {
         let endpoint = self.tree.at(pattern);
 
@@ -148,9 +148,9 @@ impl<T: Default> Router2<T> {
     }
 }
 
-impl<T: Default> Default for Router2<T> {
+impl<T: Default> Default for TreeRouter<T> {
     fn default() -> Self {
-        Router2::new()
+        TreeRouter::new()
     }
 }
 
