@@ -18,52 +18,51 @@ impl Entry {
 
 #[derive(Debug, Clone)]
 struct Transitions {
-    static_segment: BTreeMap<String, usize>,
-    param_segment: Option<Entry>,
-    wildcard: Option<Entry>,
+    static_entries: BTreeMap<String, usize>,
+    dynamic_entries: Vec<Entry>,
 }
 
 impl Transitions {
     fn new() -> Self {
         Transitions {
-            static_segment: BTreeMap::new(),
-            param_segment: None,
-            wildcard: None,
+            static_entries: BTreeMap::new(),
+            dynamic_entries: Vec::new(),
         }
     }
 
     fn get(&self, pat: &Pattern) -> Option<usize> {
         match pat {
-            Pattern::Static(p) => self.static_segment.get(p).cloned(),
-            Pattern::Param(_p) => self.param_segment.as_ref().map(|entry| entry.index),
-            Pattern::Wildcard(_p) => self.wildcard.as_ref().map(|entry| entry.index),
+            Pattern::Static(p) => self.static_entries.get(p).cloned(),
+            _ => {
+                for entry in &self.dynamic_entries {
+                    if &entry.pat == pat {
+                        return Some(entry.index);
+                    }
+                }
+                None
+            }
         }
     }
 
     fn push(&mut self, pat: Pattern, index: usize) {
         match pat {
             Pattern::Static(p) => {
-                self.static_segment.insert(p, index);
+                self.static_entries.insert(p, index);
             }
-            Pattern::Param(p) => self.param_segment = Some(Entry::new(Pattern::Param(p), index)),
-            Pattern::Wildcard(p) => self.wildcard = Some(Entry::new(Pattern::Wildcard(p), index)),
+            p => {
+                self.dynamic_entries.push(Entry::new(p, index));
+            }
         }
     }
 
     fn entries(&self) -> Vec<Entry> {
         let mut ret = Vec::new();
 
-        for (k, v) in self.static_segment.iter() {
+        for (k, v) in self.static_entries.iter() {
             ret.push(Entry::new(Pattern::Static(k.to_owned()), *v))
         }
 
-        if let Some(entry) = &self.param_segment {
-            ret.push(entry.clone());
-        }
-
-        if let Some(entry) = &self.wildcard {
-            ret.push(entry.clone());
-        }
+        ret.extend_from_slice(&self.dynamic_entries);
 
         ret
     }
@@ -71,33 +70,27 @@ impl Transitions {
     fn capture<'a: 'b, 'b>(&'b self, seg: &'a str, path: &'a str) -> Vec<(Capture, usize)> {
         let mut captures = Vec::new();
 
-        if let Some(index) = self.static_segment.get(seg) {
+        if let Some(index) = self.static_entries.get(seg) {
             captures.push((Capture::Static, *index));
         }
 
-        if let Some(Entry {
-            pat: Pattern::Param(name),
-            index,
-        }) = &self.param_segment
-        {
-            captures.push((Capture::Param(name, seg), *index));
-        }
-
-        if let Some(Entry {
-            pat: Pattern::Wildcard(name),
-            index,
-        }) = &self.wildcard
-        {
-            captures.push((Capture::Wildcard(name, path), *index));
+        for entry in &self.dynamic_entries {
+            match &entry.pat {
+                Pattern::Param(name) => {
+                    captures.push((Capture::Param(name, seg), entry.index));
+                }
+                Pattern::Wildcard(name) => {
+                    captures.push((Capture::Wildcard(name, path), entry.index));
+                }
+                _ => unreachable!(),
+            }
         }
 
         captures
     }
 
-    fn capture_static(&self, seg: &str) -> Option<(Capture, usize)> {
-        self.static_segment
-            .get(seg)
-            .map(|next| (Capture::Static, *next))
+    fn capture_static(&self, seg: &str) -> Option<usize> {
+        self.static_entries.get(seg).copied()
     }
 }
 
@@ -245,24 +238,31 @@ impl Nfa {
 
         roads = self.process_seg(roads, path, path);
 
-        let mut roads: Vec<Road> = roads
+        let roads = roads
             .into_iter()
-            .filter(|road| self.get_acceptance(road.state))
-            .collect();
+            .filter(|road| self.get_acceptance(road.state));
 
         // detect longest path
-        roads.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        let found = roads.fold(None, |prev, curr| match prev {
+            Some(item) => {
+                if item < curr {
+                    Some(curr)
+                } else {
+                    Some(item)
+                }
+            }
+            None => Some(curr),
+        });
 
-        roads.first().map(|found| {
+        found.map(|found| {
             let mut params = Vec::new();
-
-            for capture in &found.captures {
+            for capture in found.captures {
                 match capture {
                     Capture::Param(n, v) => {
-                        params.push((*n, *v));
+                        params.push((n, v));
                     }
                     Capture::Wildcard(n, v) => {
-                        params.push((*n, *v));
+                        params.push((n, v));
                     }
                     Capture::Static => {}
                 }
@@ -292,10 +292,8 @@ impl Nfa {
         self.get_state(road.state)
             .transitions
             .capture_static(seg)
-            .map(|(capture, next)| {
+            .map(|next| {
                 road.state = next;
-                road.captures.push(capture);
-
                 road
             })
     }
