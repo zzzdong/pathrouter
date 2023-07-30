@@ -23,7 +23,7 @@
 //! The router supports four kinds of route segments:
 //! - __segments__: these are of the format `/a/b`.
 //! - __params__: these are of the format `/a/:b`.
-//! - __named wildcards__: these are of the format `/a/*b`.
+//! - __wildcards__: these are of the format `/a/*b`.
 
 use std::{
     collections::{btree_map, BTreeMap},
