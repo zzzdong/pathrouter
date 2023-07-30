@@ -3,17 +3,46 @@
 extern crate pathrouter;
 extern crate test;
 
-use pathrouter::Router;
+use pathrouter::{Router, TreeRouter};
 
 #[bench]
-fn benchmark(b: &mut test::Bencher) {
+fn benchmark_nfa(b: &mut test::Bencher) {
     let mut router = Router::new();
-    router.add("/posts/:post_id/comments/:id", "comment".to_string());
-    router.add("/posts/:post_id/comments", "comments".to_string());
-    router.add("/posts/:post_id", "post".to_string());
-    router.add("/posts", "posts".to_string());
-    router.add("/comments", "comments2".to_string());
-    router.add("/comments/:id", "comment2".to_string());
 
-    b.iter(|| router.route("/posts/100/comments/200"));
+    router.add("/posts", "posts");
+    router.add("/posts/:post_id/comments/:id", "comment");
+    router.add("/posts/:post_id/comments", "comments");
+    router.add("/posts/:post_id", "post");
+    router.add("/comments", "comments2");
+    router.add("/comments/:id", "comment2");
+    router.add("/api/v1/self/profile", "profile");
+    router.add("/api/v1/*v1", "v1");
+
+    b.iter(|| {
+        router.route("/posts");
+        router.route("/posts/100/comments/200");
+        router.route("/api/v1/self/profile");
+        router.route("/api/v1/user/110/profile");
+    });
+}
+
+#[bench]
+fn benchmark_tree(b: &mut test::Bencher) {
+    let mut router = TreeRouter::new();
+
+    router.add("/posts", "posts");
+    router.add("/posts/:post_id/comments/:id", "comment");
+    router.add("/posts/:post_id/comments", "comments");
+    router.add("/posts/:post_id", "post");
+    router.add("/comments", "comments2");
+    router.add("/comments/:id", "comment2");
+    router.add("/api/v1/self/profile", "profile");
+    router.add("/api/v1/*v1", "v1");
+
+    b.iter(|| {
+        router.route("/posts");
+        router.route("/posts/100/comments/200");
+        router.route("/api/v1/self/profile");
+        router.route("/api/v1/user/110/profile");
+    });
 }

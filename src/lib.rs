@@ -1,16 +1,112 @@
+//! Recognizes URL path patterns with support for dynamic and wildcard segments
+//!
+//! # Examples
+//!
+//! ```
+//! use pathrouter::{Router, Params};
+//!
+//! let mut router = Router::new();
+//!
+//! router.add("/posts", "posts");
+//! router.add("/posts/:post_id", "post");
+//!
+//! let (endpoint, params) = router.route("/posts/1").unwrap();
+//!
+//! assert_eq!(*endpoint, "post");
+//! let mut path_params = Params::new();
+//! path_params.insert("post_id", "1");
+//! assert_eq!(params, path_params);
+//! ```
+//!
+//! # Routing params
+//!
+//! The router supports four kinds of route segments:
+//! - __segments__: these are of the format `/a/b`.
+//! - __params__: these are of the format `/a/:b`.
+//! - __named wildcards__: these are of the format `/a/*b`.
+
+use std::{
+    collections::{btree_map, BTreeMap},
+    ops::Index,
+};
+
+mod nfa;
 mod tree;
 
-use std::collections::{btree_map, BTreeMap};
-use std::ops::Index;
-
+/// Recognizes URL path patterns with support for dynamic and wildcard segments.
 #[derive(Debug, Clone)]
 pub struct Router<T> {
-    tree: crate::tree::Tree<T>,
+    tree: nfa::Nfa,
+    endpoints: BTreeMap<usize, T>,
 }
 
 impl<T> Router<T> {
     pub fn new() -> Self {
         Router {
+            tree: nfa::Nfa::new(),
+            endpoints: BTreeMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, pattern: &str, endpoint: T) {
+        let state = self.tree.insert(pattern);
+        self.endpoints.insert(state, endpoint);
+    }
+
+    pub fn route(&self, path: &str) -> Option<(&T, Params)> {
+        self.tree.search(path).map(|found| {
+            let endpoint = self.endpoints.get(&found.state).unwrap();
+            let mut params = Params::new();
+
+            for (n, v) in found.params {
+                if !n.is_empty() {
+                    params.map.insert(n.to_string(), v.to_string());
+                }
+            }
+
+            (endpoint, params)
+        })
+    }
+
+    pub fn merge(&mut self, path: &str, mut other: Router<T>) {
+        let path = path.trim_end_matches('/');
+        let state = self.tree.locate(path);
+
+        let right = other.tree.start_state();
+
+        let states = self.tree.merge(state, &other.tree, right);
+
+        for (new, old) in states {
+            if let Some(ep) = other.endpoints.remove(&old) {
+                self.endpoints.insert(new, ep);
+            }
+        }
+    }
+}
+
+impl<T: Default> Router<T> {
+    pub fn at_or_default(&mut self, path: &str) -> &mut T {
+        let state = self.tree.locate(path);
+        self.tree.accept(state);
+
+        self.endpoints.entry(state).or_default()
+    }
+}
+
+impl<T: Default> Default for Router<T> {
+    fn default() -> Self {
+        Router::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TreeRouter<T> {
+    tree: crate::tree::Tree<T>,
+}
+
+impl<T> TreeRouter<T> {
+    pub fn new() -> Self {
+        TreeRouter {
             tree: crate::tree::Tree::new(),
         }
     }
@@ -19,7 +115,7 @@ impl<T> Router<T> {
         self.tree.insert(pattern, endpoint);
     }
 
-    pub fn merge(&mut self, path: &str, other: Router<T>) {
+    pub fn merge(&mut self, path: &str, other: TreeRouter<T>) {
         self.tree.merge(path, other.tree);
     }
 
@@ -36,7 +132,7 @@ impl<T> Router<T> {
     }
 }
 
-impl<T: Default> Router<T> {
+impl<T: Default> TreeRouter<T> {
     pub fn at_or_default(&mut self, pattern: &str) -> &mut T {
         let endpoint = self.tree.at(pattern);
 
@@ -52,9 +148,9 @@ impl<T: Default> Router<T> {
     }
 }
 
-impl<T: Default> Default for Router<T> {
+impl<T: Default> Default for TreeRouter<T> {
     fn default() -> Self {
-        Router::new()
+        TreeRouter::new()
     }
 }
 
@@ -184,6 +280,24 @@ mod test {
     }
 
     #[test]
+    fn ambiguous_router_c() {
+        let mut router = Router::new();
+
+        router.add("/posts/100/comments/10", "100-10");
+        router.add("/posts/:post/comments/100", "post-100");
+
+        let (endpoint, params) = router.route("/posts/100/comments/10").unwrap();
+
+        assert_eq!(*endpoint, "100-10");
+        assert_eq!(params, empty_params());
+
+        let (endpoint, params) = router.route("/posts/100/comments/100").unwrap();
+
+        assert_eq!(*endpoint, "post-100");
+        assert_eq!(params, one_params("post", "100"));
+    }
+
+    #[test]
     fn multiple_params() {
         let mut router = Router::new();
 
@@ -293,7 +407,7 @@ mod test {
         subtree.add("/new", "new-post");
         subtree.add("/edit", "edit-post");
 
-        router.merge("/v1/posts/", subtree.clone());
+        router.merge("/v1/posts", subtree.clone());
 
         let endpoint = router.route("/v1/posts").unwrap().0;
 
