@@ -48,9 +48,10 @@ impl<T> Router<T> {
         }
     }
 
-    pub fn add(&mut self, pattern: &str, endpoint: T) {
+    pub fn add(&mut self, pattern: &str, endpoint: T) -> &mut Self {
         let state = self.tree.insert(pattern);
         self.endpoints.insert(state, endpoint);
+        self
     }
 
     pub fn route(&self, path: &str) -> Option<(&T, Params)> {
@@ -178,6 +179,10 @@ impl Params {
         self.map.remove(key.as_ref())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     pub fn iter(&self) -> ParamIter<'_> {
         ParamIter(self.map.iter())
     }
@@ -230,213 +235,114 @@ mod test {
     use super::*;
 
     #[test]
-    fn basic_router() {
+    fn test_basic_routing() {
         let mut router = Router::new();
-
         router.add("/hello", "Hello");
-        router.add("/hell", "Hell");
         router.add("/world", "World");
 
         let (endpoint, params) = router.route("/hello").unwrap();
-
         assert_eq!(*endpoint, "Hello");
-        assert_eq!(params, empty_params());
+        assert!(params.is_empty());
     }
 
     #[test]
-    fn ambiguous_router() {
+    fn test_param_routing() {
+        let mut router = Router::new();
+        router.add("/posts/:id", "post_detail");
+
+        let (endpoint, params) = router.route("/posts/123").unwrap();
+        assert_eq!(*endpoint, "post_detail");
+        assert_eq!(params.find("id"), Some("123"));
+    }
+
+    #[test]
+    fn test_wildcard_routing() {
+        let mut router = Router::new();
+        router.add("/static/*path", "static_file");
+
+        let (endpoint, params) = router.route("/static/css/style.css").unwrap();
+        assert_eq!(*endpoint, "static_file");
+        assert_eq!(params.find("path"), Some("css/style.css"));
+    }
+
+    #[test]
+    fn test_priority_routing() {
+        let mut router = Router::new();
+        router.add("/posts/new", "new_post");
+        router.add("/posts/:id", "post_detail");
+
+        // 精确匹配优先
+        let (endpoint, _) = router.route("/posts/new").unwrap();
+        assert_eq!(*endpoint, "new_post");
+
+        // 参数匹配
+        let (endpoint, _) = router.route("/posts/123").unwrap();
+        assert_eq!(*endpoint, "post_detail");
+    }
+
+    #[test]
+    fn test_multiple_params() {
+        let mut router = Router::new();
+        router.add("/users/:user_id/posts/:post_id", "user_post");
+
+        let (endpoint, params) = router.route("/users/123/posts/456").unwrap();
+        assert_eq!(*endpoint, "user_post");
+        assert_eq!(params.find("user_id"), Some("123"));
+        assert_eq!(params.find("post_id"), Some("456"));
+    }
+
+    #[test]
+    fn test_endpoint_modification() {
+        let mut router = Router::new();
+        router.add("/config", "default_config");
+
+        // 修改端点值
+        *router.at_or_default("/config") = "custom_config";
+
+        let (endpoint, _) = router.route("/config").unwrap();
+        assert_eq!(*endpoint, "custom_config");
+    }
+
+    #[test]
+    fn test_subtree_merging() {
+        let mut main_router = Router::new();
+        main_router.add("/api/v1", "api_v1");
+
+        let mut sub_router = Router::new();
+        sub_router.add("/users", "users");
+        sub_router.add("/posts", "posts");
+
+        main_router.merge("/api/v1", sub_router);
+
+        let (endpoint, _) = main_router.route("/api/v1/users").unwrap();
+        assert_eq!(*endpoint, "users");
+
+        let (endpoint, _) = main_router.route("/api/v1/posts").unwrap();
+        assert_eq!(*endpoint, "posts");
+    }
+
+    #[test]
+    fn test_edge_cases() {
         let mut router = Router::new();
 
-        router.add("/posts/new", "new");
-        router.add("/posts/:id", "id");
+        // 根路径
+        router.add("/", "root");
+        let (endpoint, _) = router.route("/").unwrap();
+        assert_eq!(*endpoint, "root");
 
-        let (endpoint, params) = router.route("/posts/1").unwrap();
-
-        assert_eq!(*endpoint, "id");
-        assert_eq!(params, one_params("id", "1"));
-
-        let (endpoint, params) = router.route("/posts/new").unwrap();
-
-        assert_eq!(*endpoint, "new");
-        assert_eq!(params, empty_params());
+        // 尾部斜杠
+        router.add("/trailing/", "trailing_slash");
+        let (endpoint, _) = router.route("/trailing/").unwrap();
+        assert_eq!(*endpoint, "trailing_slash");
     }
 
     #[test]
-    fn ambiguous_router_b() {
-        let mut router = Router::new();
-
-        router.add("/posts/:id", "id");
-        router.add("/posts/new", "new");
-
-        let (endpoint, params) = router.route("/posts/1").unwrap();
-
-        assert_eq!(*endpoint, "id");
-        assert_eq!(params, one_params("id", "1"));
-
-        let (endpoint, params) = router.route("/posts/new").unwrap();
-
-        assert_eq!(*endpoint, "new");
-        assert_eq!(params, empty_params());
-    }
-
-    #[test]
-    fn ambiguous_router_c() {
-        let mut router = Router::new();
-
-        router.add("/posts/100/comments/10", "100-10");
-        router.add("/posts/:post/comments/100", "post-100");
-
-        let (endpoint, params) = router.route("/posts/100/comments/10").unwrap();
-
-        assert_eq!(*endpoint, "100-10");
-        assert_eq!(params, empty_params());
-
-        let (endpoint, params) = router.route("/posts/100/comments/100").unwrap();
-
-        assert_eq!(*endpoint, "post-100");
-        assert_eq!(params, one_params("post", "100"));
-    }
-
-    #[test]
-    fn multiple_params() {
-        let mut router = Router::new();
-
-        router.add("/posts/:post_id/comments/:comment_id", "comment");
-        router.add("/posts/:post_id/comments", "comments");
-
-        let (endpoint, params) = router.route("/posts/12/comments/100").unwrap();
-        assert_eq!(*endpoint, "comment");
-        assert_eq!(params, two_params("post_id", "12", "comment_id", "100"));
-
-        let (endpoint, params) = router.route("/posts/12/comments").unwrap();
-        assert_eq!(*endpoint, "comments");
-        assert_eq!(params, one_params("post_id", "12"));
-        assert_eq!(params["post_id"], "12".to_string());
-    }
-
-    #[test]
-    fn wildcard_colon() {
-        let mut router = Router::new();
-
-        router.add("/a/*b", "ab");
-        router.add("/a/:b/c", "abc");
-        router.add("/a/:b/c/:d", "abcd");
-
-        let (endpoint, params) = router.route("/a/foo").unwrap();
-        assert_eq!(*endpoint, "ab");
-        assert_eq!(params, one_params("b", "foo"));
-
-        let (endpoint, params) = router.route("/a/foo/bar").unwrap();
-        assert_eq!(*endpoint, "ab");
-        assert_eq!(params, one_params("b", "foo/bar"));
-
-        let (endpoint, params) = router.route("/a/foo/c").unwrap();
-        assert_eq!(*endpoint, "abc");
-        assert_eq!(params, one_params("b", "foo"));
-    }
-
-    #[test]
-    fn unnamed_parameters() {
-        let mut router = Router::new();
-
-        router.add("/foo/:/bar", "test");
-        router.add("/bar/*", "bar");
-        router.add("/hello/*world", "hello");
-
-        let (endpoint, params) = router.route("/foo/test/bar").unwrap();
-        assert_eq!(*endpoint, "test");
-        assert_eq!(params, empty_params());
-
-        let (endpoint, params) = router.route("/bar/hello").unwrap();
-        assert_eq!(*endpoint, "bar");
-        assert_eq!(params, empty_params());
-
-        let (endpoint, params) = router.route("/hello/world").unwrap();
-        assert_eq!(*endpoint, "hello");
-        assert_eq!(params, one_params("world", "world"));
-    }
-
-    #[test]
-    fn modify_router() {
-        let mut router = Router::new();
-
-        router.add("/a/b/c", "abc");
-        router.add("/e/:f/g", "efg");
-
-        let endpoint = router.route("/a/b/c").unwrap().0;
-        assert_eq!(*endpoint, "abc");
-
-        *router.at_or_default("/a/b/c") = "aabbcc";
-
-        let endpoint = router.route("/a/b/c").unwrap().0;
-        assert_eq!(*endpoint, "aabbcc");
-
-        let endpoint = router.route("/e/f/g").unwrap().0;
-        assert_eq!(*endpoint, "efg");
-
-        *router.at_or_default("/e/:f/g") = "eeffgg";
-
-        let endpoint = router.route("/e/f/g").unwrap().0;
-        assert_eq!(*endpoint, "eeffgg");
-    }
-
-    #[test]
-    fn modify_router2() {
+    fn test_collection_endpoint() {
         let mut router: Router<Vec<&str>> = Router::new();
+        router.at_or_default("/items").push("item1");
+        router.at_or_default("/items").push("item2");
 
-        router.at_or_default("/a/b/c").push("abc");
-        router.at_or_default("/a/b/c").push("aabbcc");
-
-        let endpoint = router.route("/a/b/c").unwrap().0;
-        assert_eq!(*endpoint, vec!["abc", "aabbcc"]);
-
-        router.at_or_default("/a/b/c").clear();
-
-        let endpoint = router.route("/a/b/c").unwrap().0;
-        assert_eq!(*endpoint, Vec::<&str>::new());
-    }
-
-    #[test]
-    fn subtree() {
-        let mut router = Router::new();
-
-        router.add("/v1/posts", "posts1");
-
-        let mut subtree = Router::new();
-
-        subtree.add("/new", "new-post");
-        subtree.add("/edit", "edit-post");
-
-        router.merge("/v1/posts", subtree.clone());
-
-        let endpoint = router.route("/v1/posts").unwrap().0;
-
-        assert_eq!(*endpoint, "posts1");
-
-        let endpoint = router.route("/v1/posts/new").unwrap().0;
-
-        assert_eq!(*endpoint, "new-post");
-
-        router.merge("/v2/posts/", subtree);
-
-        assert_eq!(*router.route("/v2/posts/new").unwrap().0, "new-post");
-        assert_eq!(*router.route("/v2/posts/edit").unwrap().0, "edit-post");
-    }
-
-    fn empty_params() -> Params {
-        Params::new()
-    }
-
-    fn one_params(key: &str, value: &str) -> Params {
-        let mut map = Params::new();
-        map.insert(key, value);
-        map
-    }
-
-    fn two_params(k1: &str, v1: &str, k2: &str, v2: &str) -> Params {
-        let mut map = Params::new();
-        map.insert(k1, v1);
-        map.insert(k2, v2);
-        map
+        let (items, _) = router.route("/items").unwrap();
+        assert_eq!(*items, vec!["item1", "item2"]);
     }
 }

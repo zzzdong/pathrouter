@@ -113,7 +113,7 @@ impl<T> Tree<T> {
             if n.parent == 0 {
                 n.parent = root;
             } else {
-                n.parent = offset;
+                n.parent += offset;
             }
 
             let child = self.add_child(n.parent, n.pattern);
@@ -151,9 +151,10 @@ impl<T> Tree<T> {
         }
 
         if self.get(node).data.is_none()
-            && let Some(n) = self.search_closest_wildcard_node(node) {
-                node = n;
-            }
+            && let Some(n) = self.search_closest_wildcard_node(node)
+        {
+            node = n;
+        }
 
         self.get(node).data.as_ref().map(|_| node)
     }
@@ -193,13 +194,15 @@ impl<T> Tree<T> {
                 Some(child) => return Some(child),
                 None => {
                     if n.has_param_child
-                        && let Some(child) = n.children.get(PAT_PARAM) {
-                            return Some(child);
-                        }
+                        && let Some(child) = n.children.get(PAT_PARAM)
+                    {
+                        return Some(child);
+                    }
                     if n.has_wildcard_child
-                        && let Some(child) = n.children.get(PAT_WILDCARD) {
-                            return Some(child);
-                        }
+                        && let Some(child) = n.children.get(PAT_WILDCARD)
+                    {
+                        return Some(child);
+                    }
                 }
             };
 
@@ -397,78 +400,320 @@ impl<'a> Segments<'a> {
 mod test {
     use super::*;
 
-    #[test]
-    fn test_segments() {
-        let input = "/a/bc/d/efg";
+    // 测试辅助函数，用于创建测试用的树结构
+    fn create_basic_tree() -> Tree<&'static str> {
+        let mut tree: Tree<&'static str> = Tree::new();
+        tree.insert("/a/b/c", "static_abc");
+        tree.insert("/a/b/d", "static_abd");
+        tree.insert("/a/c", "static_ac");
+        tree.insert("/a/c/:f", "param_acf");
+        tree.insert("/h/i/j", "static_hij");
+        tree
+    }
 
-        let mut segs = Segments::new(input);
+    // 测试辅助函数，用于创建通配符测试用的树结构
+    fn create_wildcard_tree() -> Tree<&'static str> {
+        let mut tree: Tree<&'static str> = Tree::new();
+        tree.insert("/o/:p/*q", "wildcard_o");
+        tree.insert("/r/:s/t", "param_rst");
+        tree.insert("/r/*u", "wildcard_ru");
+        tree.insert("/*any", "global_wildcard");
+        tree
+    }
 
-        // while let Some(seg) = segs.next() {
-        //     println!("-> {seg}");
-        //     // break;
-        // }
-
-        for _ in 0..10 {
-            let seg = segs.next();
-
-            print!("{seg:?} - ");
-
-            println!("{:?}", segs.reminder());
-        }
+    // 测试辅助函数，用于创建优先级测试用的树结构
+    fn create_priority_tree() -> Tree<&'static str> {
+        let mut tree: Tree<&'static str> = Tree::new();
+        tree.insert("/posts/:post_id/comments/:comment_id", "comment_detail");
+        tree.insert("/posts/:post_id/comments", "comments_list");
+        tree.insert("/posts/*any", "posts_wildcard");
+        tree
     }
 
     #[test]
-    fn test_tree() {
+    fn test_tree_insert_and_search() {
+        let tree = create_basic_tree();
+
+        // 验证静态路径匹配
+        let (data, params) = tree.search("/a/b/c").unwrap();
+        assert_eq!(*data, "static_abc");
+        assert!(params.is_empty());
+
+        let (data, params) = tree.search("/a/b/d").unwrap();
+        assert_eq!(*data, "static_abd");
+        assert!(params.is_empty());
+
+        let (data, params) = tree.search("/a/c").unwrap();
+        assert_eq!(*data, "static_ac");
+        assert!(params.is_empty());
+
+        let (data, params) = tree.search("/h/i/j").unwrap();
+        assert_eq!(*data, "static_hij");
+        assert!(params.is_empty());
+
+        // 验证参数路径匹配
+        let (data, params) = tree.search("/a/c/test").unwrap();
+        assert_eq!(*data, "param_acf");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("f"), Some(&"test".to_string()));
+
+        // 验证不存在路径
+        assert!(tree.search("/unknown").is_none());
+    }
+
+    #[test]
+    fn test_tree_wildcards() {
+        let tree = create_wildcard_tree();
+
+        // 验证通配符匹配
+        let (data, params) = tree.search("/o/123/456").unwrap();
+        assert_eq!(*data, "wildcard_o");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("p"), Some(&"123".to_string()));
+        assert_eq!(params.get("q"), Some(&"456".to_string()));
+
+        // 验证参数路径匹配
+        let (data, params) = tree.search("/r/abc/t").unwrap();
+        assert_eq!(*data, "param_rst");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("s"), Some(&"abc".to_string()));
+
+        // 验证通配符匹配剩余路径
+        let (data, params) = tree.search("/r/xyz/uvw").unwrap();
+        assert_eq!(*data, "wildcard_ru");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("u"), Some(&"xyz/uvw".to_string()));
+
+        // 验证全局通配符
+        let (data, params) = tree.search("/any/path").unwrap();
+        assert_eq!(*data, "global_wildcard");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("any"), Some(&"any/path".to_string()));
+    }
+
+    #[test]
+    fn test_tree_priority() {
+        let tree = create_priority_tree();
+
+        // 精确匹配优先
+        let (data, params) = tree.search("/posts/123/comments/456").unwrap();
+        assert_eq!(*data, "comment_detail");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("post_id"), Some(&"123".to_string()));
+        assert_eq!(params.get("comment_id"), Some(&"456".to_string()));
+
+        // 参数匹配优先于通配符
+        let (data, params) = tree.search("/posts/123/comments").unwrap();
+        assert_eq!(*data, "comments_list");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("post_id"), Some(&"123".to_string()));
+
+        // 通配符匹配剩余路径
+        let (data, params) = tree.search("/posts/123/other").unwrap();
+        assert_eq!(*data, "posts_wildcard");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("any"), Some(&"123/other".to_string()));
+    }
+
+    #[test]
+    fn test_tree_merge() {
+        let mut tree1: Tree<&'static str> = Tree::new();
+        tree1.insert("/api/v1/users", "users_v1");
+        tree1.insert("/api/v1/posts", "posts_v1");
+
+        let mut tree2: Tree<&'static str> = Tree::new();
+        tree2.insert("/comments", "comments");
+        tree2.insert("/comments/:id", "comment_detail");
+
+        tree1.merge("/api/v1", tree2);
+
+        // 验证原始路径
+        let (data, _) = tree1.search("/api/v1/users").unwrap();
+        assert_eq!(*data, "users_v1");
+
+        let (data, _) = tree1.search("/api/v1/posts").unwrap();
+        assert_eq!(*data, "posts_v1");
+
+        // 验证合并后的路径
+        let (data, _) = tree1.search("/api/v1/comments").unwrap();
+        assert_eq!(*data, "comments");
+
+        let (data, params) = tree1.search("/api/v1/comments/123").unwrap();
+        assert_eq!(*data, "comment_detail");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("id"), Some(&"123".to_string()));
+    }
+
+    #[test]
+    fn test_tree_edge_cases() {
         let mut tree: Tree<&'static str> = Tree::new();
 
-        tree.insert("/a/b/c", "/a/b/c");
-        tree.insert("/a/b/d", "/a/b/d");
-        tree.insert("/a/c", "/a/c");
-        tree.insert("/a/c/:f", "/a/c/:f");
-        tree.insert("/h/i/j", "/h/i/j");
+        // 根路径
+        tree.insert("/", "root");
+        let (data, _) = tree.search("/").unwrap();
+        assert_eq!(*data, "root");
 
-        tree.insert("/o/:p/*q", "/o/:p/*q");
+        // 空路径
+        tree.insert("", "empty");
+        let (data, _) = tree.search("").unwrap();
+        assert_eq!(*data, "empty");
 
-        tree.insert("/r/:s/t", "/r/:s/t");
-        tree.insert("/r/*u", "/r/*u");
+        // 尾部斜杠
+        tree.insert("/trailing/", "trailing_slash");
+        let (data, _) = tree.search("/trailing/").unwrap();
+        assert_eq!(*data, "trailing_slash");
 
-        tree.insert("/*", "/*");
-
-        println!("{tree:?}");
-
-        assert_eq!(simple_search(&tree, "/a/b/c"), Some(&"/a/b/c"));
-        assert_eq!(simple_search(&tree, "/a/c"), Some(&"/a/c"));
-        assert_eq!(simple_search(&tree, "/a/c/f"), Some(&"/a/c/:f"));
-
-        assert_eq!(simple_search(&tree, "/h/i/j"), Some(&"/h/i/j"));
-
-        assert_eq!(simple_search(&tree, "/o/p/q"), Some(&"/o/:p/*q"));
-
-        assert_eq!(simple_search(&tree, "/r/s/t"), Some(&"/r/:s/t"));
-        assert_eq!(simple_search(&tree, "/r/uuuuu/vvvv/wwww"), Some(&"/r/*u"));
-
-        assert_eq!(simple_search(&tree, "/e/f/g"), Some(&"/*"));
+        // 多个斜杠
+        tree.insert("/multiple//slashes", "multiple_slashes");
+        let (data, _) = tree.search("/multiple//slashes").unwrap();
+        assert_eq!(*data, "multiple_slashes");
     }
 
     #[test]
-    fn test_tree_b() {
+    fn test_tree_overwrite_data() {
         let mut tree: Tree<&'static str> = Tree::new();
 
-        tree.insert("/posts/:post_id/comments/:comment_id", "comment");
+        // 插入数据
+        tree.insert("/test", "first");
+        let (data, _) = tree.search("/test").unwrap();
+        assert_eq!(*data, "first");
 
-        println!("{tree:?}");
-
-        tree.insert("/posts/:post_id/comments", "comments");
-
-        println!("{tree:?}");
-
-        assert_eq!(
-            simple_search(&tree, "/posts/12/comments/100"),
-            Some(&"comment")
-        );
+        // 覆盖数据
+        tree.insert("/test", "second");
+        let (data, _) = tree.search("/test").unwrap();
+        assert_eq!(*data, "second");
     }
 
-    fn simple_search<'a, T>(tree: &'a Tree<T>, path: &str) -> Option<&'a T> {
-        tree.search(path).map(|(v, _p)| v)
+    #[test]
+    fn test_complex_wildcard_scenarios() {
+        let mut tree: Tree<&'static str> = Tree::new();
+
+        // 复杂的通配符场景
+        tree.insert("/api/:version/*path", "api_handler");
+        tree.insert("/api/v2/specific", "specific_handler");
+
+        // 通配符应该匹配除了特定路径外的所有内容
+        let (data, params) = tree.search("/api/v1/anything/goes").unwrap();
+        assert_eq!(*data, "api_handler");
+        assert_eq!(params.len(), 2);
+
+        // 特定路径应该优先匹配
+        let (data, _) = tree.search("/api/v2/specific").unwrap();
+        assert_eq!(*data, "specific_handler");
+    }
+
+    #[test]
+    fn test_nested_parameters() {
+        let mut tree: Tree<&'static str> = Tree::new();
+
+        tree.insert("/user/:id/profile/:field", "user_field");
+        tree.insert("/user/:id", "user_detail");
+
+        let (data, params) = tree.search("/user/123/profile/email").unwrap();
+        assert_eq!(*data, "user_field");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("id"), Some(&"123".to_string()));
+        assert_eq!(params.get("field"), Some(&"email".to_string()));
+
+        let (data, params) = tree.search("/user/456").unwrap();
+        assert_eq!(*data, "user_detail");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("id"), Some(&"456".to_string()));
+    }
+
+    #[test]
+    fn test_empty_parameter_names() {
+        let mut tree: Tree<&'static str> = Tree::new();
+
+        // 测试空参数名
+        tree.insert("/test/:", "empty_param_name");
+        let (data, params) = tree.search("/test/value").unwrap();
+        assert_eq!(*data, "empty_param_name");
+        assert!(params.is_empty()); // 空参数名不应该被捕获
+
+        // 测试空通配符名
+        tree.insert("/wildcard/*", "empty_wildcard_name");
+        let (data, params) = tree.search("/wildcard/anything/else").unwrap();
+        assert_eq!(*data, "empty_wildcard_name");
+        assert!(params.is_empty()); // 空通配符名不应该被捕获
+    }
+
+    // 新增测试：验证特殊字符处理
+    #[test]
+    fn test_special_characters_in_paths() {
+        let mut tree: Tree<&'static str> = Tree::new();
+
+        // 测试包含特殊字符的路径参数
+        tree.insert("/files/:filename", "file_handler");
+        let (data, params) = tree.search("/files/document.pdf").unwrap();
+        assert_eq!(*data, "file_handler");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("filename"), Some(&"document.pdf".to_string()));
+
+        // 测试包含Unicode字符
+        let (data, params) = tree.search("/files/文件.txt").unwrap();
+        assert_eq!(*data, "file_handler");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("filename"), Some(&"文件.txt".to_string()));
+    }
+
+    // 新增测试：验证复杂合并场景
+    #[test]
+    fn test_complex_merge_scenarios() {
+        let mut tree1: Tree<&'static str> = Tree::new();
+        tree1.insert("/api", "api_root");
+
+        let mut tree2: Tree<&'static str> = Tree::new();
+        tree2.insert("/v1/users", "users_handler");
+        tree2.insert("/v1/posts", "posts_handler");
+        tree2.insert("/:version/*path", "version_catch_all");
+
+        tree1.merge("/api", tree2);
+
+        // 验证合并后的静态路径
+        let (data, _) = tree1.search("/api/v1/users").unwrap();
+        assert_eq!(*data, "users_handler");
+
+        // 验证合并后的参数路径
+        let (data, params) = tree1.search("/api/v2/any/path").unwrap();
+        assert_eq!(*data, "version_catch_all");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("version"), Some(&"v2".to_string()));
+        assert_eq!(params.get("path"), Some(&"any/path".to_string()));
+    }
+
+    // 新增测试：验证参数捕获边界情况
+    #[test]
+    fn test_parameter_capture_edge_cases() {
+        let mut tree: Tree<&'static str> = Tree::new();
+
+        // 测试连续参数
+        tree.insert("/api/:version/:resource/:id", "api_handler");
+        let (data, params) = tree.search("/api/v1/users/123").unwrap();
+        assert_eq!(*data, "api_handler");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("version"), Some(&"v1".to_string()));
+        assert_eq!(params.get("resource"), Some(&"users".to_string()));
+        assert_eq!(params.get("id"), Some(&"123".to_string()));
+    }
+
+    // 新增测试：验证通配符边界情况
+    #[test]
+    fn test_wildcard_edge_cases() {
+        let mut tree: Tree<&'static str> = Tree::new();
+
+        // 测试根通配符
+        tree.insert("/*path", "root_wildcard");
+        let (data, params) = tree.search("/").unwrap();
+        assert_eq!(*data, "root_wildcard");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("path"), Some(&"".to_string()));
+
+        // 测试深层通配符
+        tree.insert("/deep/*rest", "deep_wildcard");
+        let (data, params) = tree.search("/deep/a/b/c/d").unwrap();
+        assert_eq!(*data, "deep_wildcard");
+        let params = params.into_values().collect::<BTreeMap<String, String>>();
+        assert_eq!(params.get("rest"), Some(&"a/b/c/d".to_string()));
     }
 }

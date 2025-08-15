@@ -675,7 +675,7 @@ mod test {
         assert!(result2.is_some());
 
         // 测试空参数
-        let state = nfa.insert("/api/:param");
+        nfa.insert("/api/:param");
         let result3 = nfa.search("/api/");
         assert!(result3.is_none());
 
@@ -696,7 +696,6 @@ mod test {
 
         // 验证未接受状态
         assert!(!nfa.get_acceptance(state1));
-        println!("-> {:?}", nfa.search("/api/v1/users"));
         assert!(nfa.search("/api/v1/users").is_none());
 
         // 标记为接受状态
@@ -726,5 +725,53 @@ mod test {
         nfa.insert("/dynamic/:id");
         let result3 = nfa.search("/dynamic/123");
         assert!(result3.is_some());
+    }
+
+    // 新增测试：验证特殊字符和边界情况
+    #[test]
+    fn test_special_characters() {
+        let mut nfa = Nfa::new();
+
+        // 测试包含特殊字符的路径
+        nfa.insert("/api/v1/users/:id");
+        let result = nfa.search("/api/v1/users/user@domain.com");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().params, vec![("id", "user@domain.com")]);
+
+        // 测试包含Unicode字符
+        let result2 = nfa.search("/api/v1/users/用户");
+        assert!(result2.is_some());
+        assert_eq!(result2.unwrap().params, vec![("id", "用户")]);
+    }
+
+    // 新增测试：验证复杂通配符情况
+    #[test]
+    fn test_complex_wildcard_cases() {
+        let mut nfa = Nfa::new();
+
+        // 测试多层通配符路径
+        let state = nfa.insert("/api/*path");
+        let result = nfa.search("/api/v1/users/123/profile");
+        assert!(result.is_some());
+        assert_eq!(result.as_ref().unwrap().state, state);
+        assert_eq!(
+            result.unwrap().params,
+            vec![("path", "v1/users/123/profile")]
+        );
+    }
+
+    // 新增测试：验证参数名称边界情况
+    #[test]
+    fn test_parameter_edge_cases() {
+        let mut nfa = Nfa::new();
+
+        // 测试空参数值
+        nfa.insert("/api/:version/resource");
+        assert!(nfa.search("/api//resource").is_none());
+
+        // 测试参数值包含特殊字符
+        let result = nfa.search("/api/v1.0/resource");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().params, vec![("version", "v1.0")]);
     }
 }
