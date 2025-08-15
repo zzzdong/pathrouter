@@ -150,11 +150,10 @@ impl<T> Tree<T> {
             }
         }
 
-        if self.get(node).data.is_none() {
-            if let Some(n) = self.search_closest_wildcard_node(node) {
+        if self.get(node).data.is_none()
+            && let Some(n) = self.search_closest_wildcard_node(node) {
                 node = n;
             }
-        }
 
         self.get(node).data.as_ref().map(|_| node)
     }
@@ -193,16 +192,14 @@ impl<T> Tree<T> {
             match n.children.get(pat) {
                 Some(child) => return Some(child),
                 None => {
-                    if n.has_param_child {
-                        if let Some(child) = n.children.get(PAT_PARAM) {
+                    if n.has_param_child
+                        && let Some(child) = n.children.get(PAT_PARAM) {
                             return Some(child);
                         }
-                    }
-                    if n.has_wildcard_child {
-                        if let Some(child) = n.children.get(PAT_WILDCARD) {
+                    if n.has_wildcard_child
+                        && let Some(child) = n.children.get(PAT_WILDCARD) {
                             return Some(child);
                         }
-                    }
                 }
             };
 

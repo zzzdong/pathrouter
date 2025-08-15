@@ -67,7 +67,7 @@ impl Transitions {
         ret
     }
 
-    fn capture<'a: 'b, 'b>(&'b self, seg: &'a str, path: &'a str) -> Vec<(Capture, usize)> {
+    fn capture<'a: 'b, 'b>(&'b self, seg: &'a str, path: &'a str) -> Vec<(Capture<'b>, usize)> {
         let mut captures = Vec::new();
 
         if let Some(index) = self.static_entries.get(seg) {
@@ -77,6 +77,9 @@ impl Transitions {
         for entry in &self.dynamic_entries {
             match &entry.pat {
                 Pattern::Param(name) => {
+                    if seg.is_empty() {
+                        continue;
+                    }
                     captures.push((Capture::Param(name, seg), entry.index));
                 }
                 Pattern::Wildcard(name) => {
@@ -223,6 +226,9 @@ impl Nfa {
     }
 
     pub fn search<'a: 'b, 'b>(&'a self, path: &'b str) -> Option<Match<'b>> {
+        if path.is_empty() {
+            return None;
+        }
         let mut path = path.trim_start_matches(CHAR_PATH_SEP);
 
         // try fast path, only match static transition
@@ -272,7 +278,7 @@ impl Nfa {
         })
     }
 
-    fn fast_path_search(&self, path: &str) -> Option<Match> {
+    fn fast_path_search(&self, path: &str) -> Option<Match<'_>> {
         let mut road = Road::new(self.start_state(), Vec::new());
         for seg in path.split(CHAR_PATH_SEP) {
             match self.process_static_seg(seg, road) {
@@ -285,7 +291,11 @@ impl Nfa {
             }
         }
 
-        Some(Match::new(road.state, Vec::new()))
+        if self.get_acceptance(road.state) {
+            return Some(Match::new(road.state, Vec::new()));
+        }
+
+        None
     }
 
     fn process_static_seg<'a: 'b, 'b>(&'a self, seg: &str, mut road: Road<'b>) -> Option<Road<'b>> {
@@ -405,17 +415,17 @@ impl<'a> PartialOrd for Road<'a> {
                 match (a, b) {
                     (Capture::Static, Capture::Param(_, _))
                     | (Capture::Static, Capture::Wildcard(_, _)) => {
-                        return Some(std::cmp::Ordering::Greater)
+                        return Some(std::cmp::Ordering::Greater);
                     }
                     (Capture::Param(_, _), Capture::Static)
                     | (Capture::Wildcard(_, _), Capture::Static) => {
-                        return Some(std::cmp::Ordering::Less)
+                        return Some(std::cmp::Ordering::Less);
                     }
                     (Capture::Param(_, _), Capture::Wildcard(_, _)) => {
-                        return Some(std::cmp::Ordering::Greater)
+                        return Some(std::cmp::Ordering::Greater);
                     }
                     (Capture::Wildcard(_, _), Capture::Param(_, _)) => {
-                        return Some(std::cmp::Ordering::Less)
+                        return Some(std::cmp::Ordering::Less);
                     }
                     _ => continue,
                 }
@@ -432,57 +442,289 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_nfa() {
+    fn test_static_paths() {
         let mut nfa = Nfa::new();
 
-        nfa.insert("/api/v1/post/tom/daily");
-        nfa.insert("/api/v2/post/tom/daily");
-        nfa.insert("/api/v1/post/:user/daily");
-        nfa.insert("/api/v1/post/*any");
+        // 插入静态路径
+        let state1 = nfa.insert("/api/v1/users");
+        let state2 = nfa.insert("/api/v1/posts");
+        let state3 = nfa.insert("/");
 
-        println!("-> {:?}", nfa);
+        // 验证路径匹配
+        let result1 = nfa.search("/api/v1/users");
+        assert!(result1.is_some());
+        assert_eq!(result1.unwrap().state, state1);
 
-        let ret = nfa.search("/api/v1/post/tom/daily");
+        let result2 = nfa.search("/api/v1/posts");
+        assert!(result2.is_some());
+        assert_eq!(result2.unwrap().state, state2);
 
-        println!("ret => {:?}", ret);
+        // 验证根路径
+        let result3 = nfa.search("/");
+        assert!(result3.is_some());
+        assert_eq!(result3.unwrap().state, state3);
+
+        // 验证不存在路径
+        assert!(nfa.search("/api/v1/comments").is_none());
+        assert!(nfa.search("").is_none());
     }
 
     #[test]
-    fn test_nfa2() {
+    fn test_param_paths() {
         let mut nfa = Nfa::new();
 
-        nfa.insert("/posts/:post_id/comments/100");
-        nfa.insert("/posts/100/comments/10");
+        // 插入参数路径
+        let state1 = nfa.insert("/api/v1/users/:id");
+        let state2 = nfa.insert("/posts/:post_id/comments/:comment_id");
 
-        println!("-> {:?}", nfa);
+        // 验证参数匹配
+        let result = nfa.search("/api/v1/users/123");
+        assert!(result.is_some());
+        let matched = result.unwrap();
+        assert_eq!(matched.state, state1);
+        assert_eq!(matched.params, vec![("id", "123")]);
 
-        let ret = nfa.search("/posts/100/comments/100");
+        // 验证不同参数值
+        let result2 = nfa.search("/api/v1/users/abc");
+        assert!(result2.is_some());
+        let matched2 = result2.unwrap();
+        assert_eq!(matched2.state, state1);
+        assert_eq!(matched2.params, vec![("id", "abc")]);
 
-        println!("ret => {:?}", ret);
+        // 验证多参数路径
+        let result3 = nfa.search("/posts/100/comments/200");
+        assert!(result3.is_some());
+        let matched3 = result3.unwrap();
+        assert_eq!(matched3.state, state2);
+        assert_eq!(
+            matched3.params,
+            vec![("post_id", "100"), ("comment_id", "200")]
+        );
+
+        // 验证空参数段
+        assert!(nfa.search("/api/v1/users/").is_none());
+        assert!(nfa.search("/posts//comments/200").is_none());
     }
 
     #[test]
-    fn test_nfa_merge() {
+    fn test_wildcard_paths() {
         let mut nfa = Nfa::new();
 
+        // 插入通配符路径
+        let state1 = nfa.insert("/api/v1/assets/*path");
+        let state2 = nfa.insert("/*any");
+
+        // 验证通配符匹配
+        let result = nfa.search("/api/v1/assets/css/style.css");
+        assert!(result.is_some());
+        let matched = result.unwrap();
+        assert_eq!(matched.state, state1);
+        assert_eq!(matched.params, vec![("path", "css/style.css")]);
+
+        // 验证尾部斜杠处理
+        let result2 = nfa.search("/api/v1/assets/");
+        assert!(result2.is_some());
+        let matched2 = result2.unwrap();
+        assert_eq!(matched2.state, state1);
+        assert_eq!(matched2.params, vec![("path", "")]);
+
+        // 验证全局通配符
+        let result3 = nfa.search("/any/path/here");
+        assert!(result3.is_some());
+        let matched3 = result3.unwrap();
+        assert_eq!(matched3.state, state2);
+        assert_eq!(matched3.params, vec![("any", "any/path/here")]);
+
+        // 验证根路径匹配
+        let result4 = nfa.search("/");
+        assert!(result4.is_some());
+        let matched4 = result4.unwrap();
+        assert_eq!(matched4.state, state2);
+        assert_eq!(matched4.params, vec![("any", "")]);
+    }
+
+    #[test]
+    fn test_mixed_patterns() {
+        let mut nfa = Nfa::new();
+
+        // 插入混合模式路径
+        let state1 = nfa.insert("/api/v1/users/:id/posts");
+        let state2 = nfa.insert("/api/v1/users/:id/posts/*slug");
+        let state3 = nfa.insert("/static/:category/*filepath");
+
+        // 验证精确匹配
+        let result1 = nfa.search("/api/v1/users/123/posts");
+        assert!(result1.is_some());
+        let matched1 = result1.unwrap();
+        assert_eq!(matched1.state, state1);
+        assert_eq!(matched1.params, vec![("id", "123")]);
+
+        // 验证通配符匹配
+        let result2 = nfa.search("/api/v1/users/123/posts/images/banner.png");
+        assert!(result2.is_some());
+        let matched2 = result2.unwrap();
+        assert_eq!(matched2.state, state2);
+        assert_eq!(
+            matched2.params,
+            vec![("id", "123"), ("slug", "images/banner.png")]
+        );
+
+        // 验证混合参数和通配符
+        let result3 = nfa.search("/static/css/styles/main.css");
+        assert!(result3.is_some());
+        let matched3 = result3.unwrap();
+        assert_eq!(matched3.state, state3);
+        assert_eq!(
+            matched3.params,
+            vec![("category", "css"), ("filepath", "styles/main.css")]
+        );
+
+        // 验证部分匹配
+        assert!(nfa.search("/api/v1/users/123").is_none());
+    }
+
+    #[test]
+    fn test_priority_matching() {
+        let mut nfa = Nfa::new();
+
+        // 插入具有相同前缀但不同优先级的路径
+        let static_state = nfa.insert("/api/v1/special");
+        let param_state = nfa.insert("/api/v1/:param");
+        let wildcard_state = nfa.insert("/api/v1/*any");
+
+        // 静态路径应优先匹配
+        let result = nfa.search("/api/v1/special");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().state, static_state);
+
+        // 参数路径匹配其他值
+        let result2 = nfa.search("/api/v1/anything");
+        assert!(result2.is_some());
+        let matched2 = result2.unwrap();
+        assert_eq!(matched2.state, param_state);
+        assert_eq!(matched2.params, vec![("param", "anything")]);
+
+        // 通配符路径应最后匹配
+        let result3 = nfa.search("/api/v1/other/path");
+        assert!(result3.is_some());
+        let matched3 = result3.unwrap();
+        assert_eq!(matched3.state, wildcard_state);
+        assert_eq!(matched3.params, vec![("any", "other/path")]);
+
+        // 验证更具体的路径优先
+        let specific_state = nfa.insert("/api/v1/special/detail");
+        let result4 = nfa.search("/api/v1/special/detail");
+        assert!(result4.is_some());
+        assert_eq!(result4.unwrap().state, specific_state);
+    }
+
+    #[test]
+    fn test_merge_functionality() {
+        let mut nfa = Nfa::new();
         nfa.insert("/a/b/c");
         nfa.insert("/a/b/d");
-        nfa.insert("/a/b/e");
 
         let mut other = Nfa::new();
-
         other.insert("/h/i/j");
         other.insert("/h/i/k");
-        other.insert("/h/i/l");
+        other.insert("/h/:param");
 
-        let sub = nfa.locate("/a");
-
+        let sub = nfa.locate("/a/b");
         nfa.merge(sub, &other, other.start_state());
 
-        println!("-> {:?}", nfa);
+        // 验证合并后的路径匹配
+        let result1 = nfa.search("/a/b/h/i/j");
+        assert!(result1.is_some());
+        let matched1 = result1.unwrap();
+        assert_eq!(matched1.params.len(), 0);
 
-        let ret = nfa.search("/a/h/i/k");
+        let result2 = nfa.search("/a/b/h/i/k");
+        assert!(result2.is_some());
+        let matched2 = result2.unwrap();
+        assert_eq!(matched2.params.len(), 0);
 
-        println!("ret => {:?}", ret);
+        // 验证参数路径
+        let result3 = nfa.search("/a/b/h/123");
+        assert!(result3.is_some());
+        let matched3 = result3.unwrap();
+        assert_eq!(matched3.params, vec![("param", "123")]);
+
+        // 验证原始路径仍然存在
+        let result4 = nfa.search("/a/b/c");
+        assert!(result4.is_some());
+        let result5 = nfa.search("/a/b/d");
+        assert!(result5.is_some());
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        let mut nfa = Nfa::new();
+
+        // 测试空路径
+        assert!(nfa.search("").is_none());
+
+        // 测试只有斜杠的路径
+        let root_state = nfa.insert("/");
+        let result = nfa.search("/");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().state, root_state);
+
+        // 测试多个连续斜杠
+        nfa.insert("/api//v1/users");
+        let result2 = nfa.search("/api//v1/users");
+        assert!(result2.is_some());
+
+        // 测试空参数
+        let state = nfa.insert("/api/:param");
+        let result3 = nfa.search("/api/");
+        assert!(result3.is_none());
+
+        // 测试带特殊字符的路径
+        nfa.insert("/files/:name");
+        let result4 = nfa.search("/files/image%20with%20space.jpg");
+        assert!(result4.is_some());
+        let matched4 = result4.unwrap();
+        assert_eq!(matched4.params, vec![("name", "image%20with%20space.jpg")]);
+    }
+
+    #[test]
+    fn test_acceptance_logic() {
+        let mut nfa = Nfa::new();
+
+        // 插入但不标记为接受状态
+        let state1 = nfa.locate("/api/v1/users");
+
+        // 验证未接受状态
+        assert!(!nfa.get_acceptance(state1));
+        println!("-> {:?}", nfa.search("/api/v1/users"));
+        assert!(nfa.search("/api/v1/users").is_none());
+
+        // 标记为接受状态
+        nfa.accept(state1);
+        assert!(nfa.get_acceptance(state1));
+
+        // 现在应该能匹配
+        let result = nfa.search("/api/v1/users");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().state, state1);
+    }
+
+    #[test]
+    fn test_fast_path_search() {
+        let mut nfa = Nfa::new();
+        nfa.insert("/static/css/style.css");
+        nfa.insert("/static/js/app.js");
+
+        // 验证快速路径匹配
+        let result1 = nfa.search("/static/css/style.css");
+        assert!(result1.is_some());
+
+        let result2 = nfa.search("/static/js/app.js");
+        assert!(result2.is_some());
+
+        // 验证非静态路径不会使用快速路径
+        nfa.insert("/dynamic/:id");
+        let result3 = nfa.search("/dynamic/123");
+        assert!(result3.is_some());
     }
 }

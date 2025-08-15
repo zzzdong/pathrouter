@@ -26,7 +26,7 @@
 //! - __wildcards__: these are of the format `/a/*b`.
 
 use std::{
-    collections::{btree_map, BTreeMap},
+    collections::{BTreeMap, btree_map},
     ops::Index,
 };
 
@@ -178,7 +178,7 @@ impl Params {
         self.map.remove(key.as_ref())
     }
 
-    pub fn iter(&self) -> ParamIter {
+    pub fn iter(&self) -> ParamIter<'_> {
         ParamIter(self.map.iter())
     }
 }
