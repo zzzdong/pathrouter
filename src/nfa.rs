@@ -19,28 +19,24 @@ impl Entry {
 #[derive(Debug, Clone)]
 struct Transitions {
     static_entries: BTreeMap<String, usize>,
-    dynamic_entries: Vec<Entry>,
+    param_entry: Option<(String, usize)>,
+    wildcard_entry: Option<(String, usize)>,
 }
 
 impl Transitions {
     fn new() -> Self {
         Transitions {
             static_entries: BTreeMap::new(),
-            dynamic_entries: Vec::new(),
+            param_entry: None,
+            wildcard_entry: None,
         }
     }
 
     fn get(&self, pat: &Pattern) -> Option<usize> {
         match pat {
             Pattern::Static(p) => self.static_entries.get(p).cloned(),
-            _ => {
-                for entry in &self.dynamic_entries {
-                    if &entry.pat == pat {
-                        return Some(entry.index);
-                    }
-                }
-                None
-            }
+            Pattern::Param(_) => self.param_entry.as_ref().map(|x| x.1),
+            Pattern::Wildcard(_) => self.wildcard_entry.as_ref().map(|x| x.1),
         }
     }
 
@@ -49,22 +45,13 @@ impl Transitions {
             Pattern::Static(p) => {
                 self.static_entries.insert(p, index);
             }
-            p => {
-                self.dynamic_entries.push(Entry::new(p, index));
+            Pattern::Param(p) => {
+                self.param_entry = Some((p, index));
+            }
+            Pattern::Wildcard(p) => {
+                self.wildcard_entry = Some((p, index));
             }
         }
-    }
-
-    fn entries(&self) -> Vec<Entry> {
-        let mut ret = Vec::new();
-
-        for (k, v) in self.static_entries.iter() {
-            ret.push(Entry::new(Pattern::Static(k.to_owned()), *v))
-        }
-
-        ret.extend_from_slice(&self.dynamic_entries);
-
-        ret
     }
 
     fn capture<'a: 'b, 'b>(&'b self, seg: &'a str, path: &'a str) -> Vec<(Capture<'b>, usize)> {
@@ -74,19 +61,14 @@ impl Transitions {
             captures.push((Capture::Static, *index));
         }
 
-        for entry in &self.dynamic_entries {
-            match &entry.pat {
-                Pattern::Param(name) => {
-                    if seg.is_empty() {
-                        continue;
-                    }
-                    captures.push((Capture::Param(name, seg), entry.index));
-                }
-                Pattern::Wildcard(name) => {
-                    captures.push((Capture::Wildcard(name, path), entry.index));
-                }
-                _ => unreachable!(),
+        if !seg.is_empty() {
+            if let Some((name, index)) = &self.param_entry {
+                captures.push((Capture::Param(name, seg), *index));
             }
+        }
+
+        if let Some((name, index)) = &self.wildcard_entry {
+            captures.push((Capture::Wildcard(name, path), *index));
         }
 
         captures
@@ -350,18 +332,55 @@ impl Nfa {
     pub(crate) fn merge(&mut self, left: usize, other: &Self, right: usize) -> Vec<(usize, usize)> {
         let mut returned = Vec::new();
 
-        for Entry { pat, index: old } in other.get_state(right).transitions.entries() {
+        // 获取 other NFA 中 right 状态的 transitions
+        let transitions = &other.get_state(right).transitions;
+
+        // 处理 static entries
+        for (pat, &old_index) in &transitions.static_entries {
             let new_state = self.new_state();
-            if other.get_acceptance(old) {
+            if other.get_acceptance(old_index) {
                 self.accept(new_state);
             }
             self.get_state_mut(left)
                 .transitions
-                .push(pat.clone(), new_state);
+                .push(Pattern::Static(pat.clone()), new_state);
 
-            returned.push((new_state, old));
+            returned.push((new_state, old_index));
 
-            returned.extend(self.merge(new_state, other, old));
+            // 递归合并子状态
+            returned.extend(self.merge(new_state, other, old_index));
+        }
+
+        // 处理 param entry
+        if let Some((name, old_index)) = &transitions.param_entry {
+            let new_state = self.new_state();
+            if other.get_acceptance(*old_index) {
+                self.accept(new_state);
+            }
+            self.get_state_mut(left)
+                .transitions
+                .push(Pattern::Param(name.clone()), new_state);
+
+            returned.push((new_state, *old_index));
+
+            // 递归合并子状态
+            returned.extend(self.merge(new_state, other, *old_index));
+        }
+
+        // 处理 wildcard entry
+        if let Some((name, old_index)) = &transitions.wildcard_entry {
+            let new_state = self.new_state();
+            if other.get_acceptance(*old_index) {
+                self.accept(new_state);
+            }
+            self.get_state_mut(left)
+                .transitions
+                .push(Pattern::Wildcard(name.clone()), new_state);
+
+            returned.push((new_state, *old_index));
+
+            // 递归合并子状态
+            returned.extend(self.merge(new_state, other, *old_index));
         }
 
         returned
